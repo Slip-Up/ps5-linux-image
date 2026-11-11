@@ -1,0 +1,58 @@
+name: Fork arm64 test
+
+# Test only, do not merge. Runs one image build on a GitHub arm64 runner with
+# qemu, like the self-hosted runner, using released kernel packages.
+on:
+  workflow_dispatch:
+    inputs:
+      distro:
+        description: 'Distribution'
+        default: 'bazzite'
+        type: choice
+        options: [bazzite, fedora, bazzite-deck, arch, cachyos, ubuntu2604, debian, proxmox, steamos]
+      kernel_tag:
+        description: 'ps5-linux-patches release with kernel packages'
+        default: 'kernel-7.3.1-1496086'
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    steps:
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache /usr/local/share/boost
+          docker system prune -af > /dev/null || true
+          df -h /
+
+      - name: Set up qemu
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64
+
+      - name: Checkout image builder
+        uses: actions/checkout@v6
+        with:
+          path: image
+
+      - name: Download kernel packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p image/linux-bin
+          gh release download "${{ inputs.kernel_tag }}" \
+            --repo ps5-linux/ps5-linux-patches --dir image/linux-bin
+          ls -la image/linux-bin
+
+      - name: Build ${{ inputs.distro }} image
+        run: bash image/build_image.sh --distro "${{ inputs.distro }}"
+
+      - name: Report
+        if: always()
+        run: |
+          df -h /
+          ls -la image/output || true
+          docker image ls ps5-image-builder || true
