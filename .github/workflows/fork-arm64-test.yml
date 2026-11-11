@@ -1,8 +1,10 @@
 name: Fork arm64 test
 
-# Test only, do not merge. Runs one image build on a GitHub arm64 runner with
+# Test only, do not merge. Runs image builds on a GitHub arm64 runner with
 # qemu, like the self-hosted runner, using released kernel packages.
 on:
+  push:
+    branches: [ci-arm64-test]
   workflow_dispatch:
     inputs:
       distro:
@@ -19,6 +21,12 @@ jobs:
   build:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: ${{ fromJson(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.distro) || '["bazzite","fedora"]') }}
+    env:
+      KERNEL_TAG: ${{ inputs.kernel_tag || 'kernel-7.3.1-1496086' }}
     steps:
       - name: Free disk space
         run: |
@@ -43,12 +51,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p image/linux-bin
-          gh release download "${{ inputs.kernel_tag }}" \
+          gh release download "$KERNEL_TAG" \
             --repo ps5-linux/ps5-linux-patches --dir image/linux-bin
           ls -la image/linux-bin
 
-      - name: Build ${{ inputs.distro }} image
-        run: bash image/build_image.sh --distro "${{ inputs.distro }}"
+      - name: Build ${{ matrix.distro }} image
+        run: bash image/build_image.sh --distro "${{ matrix.distro }}"
 
       - name: Report
         if: always()
