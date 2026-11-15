@@ -45,6 +45,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 LINUX_REPO="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
+# Mirrors of the stable tree with the same tags, tried in this order when
+# kernel.org cannot be reached (it times out from some cloud runners).
+LINUX_MIRRORS="https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux.git
+               https://github.com/gregkh/linux.git"
 LINUX_DEFAULT_DIR="$SCRIPT_DIR/work/linux"
 
 PATCHES_REPO="https://github.com/ps5-linux/ps5-linux-patches.git"
@@ -306,8 +310,19 @@ else
         done
         LINUX_BRANCH="v$(sed -nE 's/^# Linux\/[^ ]+ ([0-9]+\.[0-9]+(\.[0-9]+)?) .*/\1/p' "$PATCHES_DIR/.config" | head -1)"
 
-        run_stage "Clone kernel $LINUX_BRANCH" \
-            git clone --branch "$LINUX_BRANCH" --depth 1 "$LINUX_REPO" "$LINUX_TMP_DIR"
+        clone_kernel() {
+            local url
+            for url in $LINUX_REPO $LINUX_MIRRORS; do
+                rm -rf "${LINUX_TMP_DIR:?}"
+                echo "Cloning $LINUX_BRANCH from $url"
+                # Give up on a stalled server after 30 s instead of hanging.
+                git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
+                    clone --branch "$LINUX_BRANCH" --depth 1 "$url" "$LINUX_TMP_DIR" && return 0
+                echo "Clone from $url failed"
+            done
+            return 1
+        }
+        run_stage "Clone kernel $LINUX_BRANCH" clone_kernel
 
         run_stage "Apply patches" bash -c '
             set -e; shopt -s nullglob
