@@ -1,0 +1,20 @@
+[
+  { "key": "ubuntu2604",    "label": "Ubuntu 26.04" },
+  { "key": "arch",          "label": "Arch" },
+  { "key": "cachyos",       "label": "CachyOS" },
+  { "key": "fedora",        "label": "Fedora 44" },
+  { "key": "proxmox",       "label": "Proxmox VE 8" },
+  { "key": "debian",        "label": "Debian 12" },
+  { "key": "debian13",      "label": "Debian 13" },
+  { "key": "bazzite",       "label": "Bazzite (KDE gaming)" },
+  { "key": "bazzite-deck",  "label": "Bazzite Deck UI" },
+  { "key": "steamos",       "label": "SteamOS 3 (Holo)" },
+  { "key": "ubuntu-server", "label": "Ubuntu 26.04 Server (headless)" },
+  { "key": "kubuntu2604",   "label": "Kubuntu 26.04" },
+  { "key": "fedora-kde",    "label": "Fedora 44 KDE" },
+  { "key": "debian-server", "label": "Debian 12 Server (headless)" },
+  { "key": "nobara",        "label": "Nobara 44 (KDE)" },
+  { "key": "endeavouros",   "label": "EndeavourOS (KDE)" },
+  { "key": "linuxmint",     "label": "Linux Mint 22.3 (Cinnamon)" },
+  { "key": "popos",         "label": "Pop!_OS 26.04 (COSMIC)" }
+]
