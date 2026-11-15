@@ -118,6 +118,9 @@ jobs:
         run: |
           xz -T0 -4 -c image/output/ps5-${{ matrix.distro }}.img \
             > image/output/ps5-${{ matrix.distro }}.img.xz
+          # Checksum file published next to the image ("sha256sum -c" format).
+          ( cd image/output && sha256sum ps5-${{ matrix.distro }}.img.xz \
+              > ps5-${{ matrix.distro }}.img.xz.sha256 )
 
       - name: Upload to R2
         if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
@@ -129,14 +132,18 @@ jobs:
           RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           RCLONE_CONFIG_R2_NO_CHECK_BUCKET: true
         run: |
+          # The image replaces the previous one right away, so its checksum
+          # file goes up with it: the release body is only rewritten later,
+          # in the release job.
           rclone copyto image/output/ps5-${{ matrix.distro }}.img.xz \
             "r2:${{ secrets.R2_BUCKET }}/ps5-${{ matrix.distro }}.img.xz"
+          rclone copyto image/output/ps5-${{ matrix.distro }}.img.xz.sha256 \
+            "r2:${{ secrets.R2_BUCKET }}/ps5-${{ matrix.distro }}.img.xz.sha256"
 
       - name: Save build metadata
         run: |
           mkdir -p meta
-          sha256sum image/output/ps5-${{ matrix.distro }}.img.xz \
-            | sed 's|image/output/||' > meta/${{ matrix.distro }}.sha256
+          cp image/output/ps5-${{ matrix.distro }}.img.xz.sha256 meta/${{ matrix.distro }}.sha256
           echo "${{ steps.version.outputs.kver }}" > meta/kver
           echo "${{ steps.version.outputs.psha }}" > meta/psha
           echo "${{ steps.version.outputs.ts }}" > meta/ts
@@ -149,17 +156,26 @@ jobs:
           retention-days: 1
 
   release:
-    needs: build
+    needs: [matrix, build]
     runs-on: self-hosted
     concurrency:
       group: ps5-image-release
       cancel-in-progress: false
-    if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    # Also run when some distros failed: the images that did build are already
+    # on R2, so their checksums must be updated here too (issue #51).
+    if: >-
+      ${{ !cancelled()
+          && needs.matrix.result == 'success'
+          && needs.build.result != 'skipped'
+          && github.event_name != 'pull_request'
+          && github.event_name != 'pull_request_target' }}
     permissions:
       contents: write
     steps:
       - name: Download build metadata
         uses: actions/download-artifact@v6
+        # No artifacts when every build failed; the next step handles that.
+        continue-on-error: true
         with:
           pattern: meta-*
           path: meta
@@ -168,10 +184,19 @@ jobs:
       - name: Prepare release body
         id: body
         uses: actions/github-script@v8
+        env:
+          ATTEMPTED: ${{ needs.matrix.outputs.distros }}
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
+
+            // Nothing built (every distro failed): leave the release as it is.
+            if (!fs.existsSync('meta/kver')) {
+              core.notice('No image was built in this run; release left unchanged.');
+              core.setOutput('skip', 'true');
+              return;
+            }
 
             const kver = fs.readFileSync('meta/kver', 'utf8').trim();
             const psha = fs.readFileSync('meta/psha', 'utf8').trim();
@@ -229,10 +254,16 @@ jobs:
               mergedSums[k] = v;
             }
 
-            // Build the table — only include distros that have been built at least once
+            // Build the table — only include distros that have been built at least once.
+            // Each image has a .sha256 file next to it on R2, uploaded with the image.
             const rows = ALL_DISTROS
               .filter(d => d.key in mergedSums || d.key in newSums)
-              .map(d => `| ${d.label} | [\`${d.file}\`](${R2}/${d.file}) |`);
+              .map(d => `| ${d.label} | [\`${d.file}\`](${R2}/${d.file}) | [\`sha256\`](${R2}/${d.file}.sha256) |`);
+
+            // Distros this run tried to build but did not (their previous image is kept)
+            const attempted = JSON.parse(process.env.ATTEMPTED || '[]');
+            const failed = attempted.filter(d => !(d in newSums));
+            const label = k => (ALL_DISTROS.find(d => d.key === k) || { label: k }).label;
 
             // Combine all checksum lines
             const allSumLines = ALL_DISTROS
@@ -246,12 +277,15 @@ jobs:
               `Kernel: \`${kver}\``,
               `Patches: [\`${psha}\`](https://github.com/ps5-linux/ps5-linux-patches/commit/${psha})`,
               `Built: \`${ts}\``,
+              ...(failed.length
+                ? ['', `Not rebuilt in this run (previous image kept): ${failed.map(label).join(', ')}`]
+                : []),
               '',
-              '| Image | Download |',
-              '|-------|----------|',
+              '| Image | Download | Checksum |',
+              '|-------|----------|----------|',
               ...rows,
               '',
-              '**SHA256 checksums:**',
+              '**SHA256 checksums** (each image also has a `.sha256` file next to it):',
               '```',
               allSumLines,
               '```',
@@ -260,6 +294,7 @@ jobs:
             core.setOutput('text', body);
 
       - name: Move latest tag to current commit
+        if: steps.body.outputs.skip != 'true'
         uses: actions/github-script@v8
         with:
           script: |
@@ -276,6 +311,7 @@ jobs:
             }
 
       - name: Create or update release
+        if: steps.body.outputs.skip != 'true'
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -285,6 +321,7 @@ jobs:
           make_latest: true
 
       - name: Refresh release publish date
+        if: steps.body.outputs.skip != 'true'
         uses: actions/github-script@v8
         with:
           script: |
