@@ -1,0 +1,12 @@
+[Unit]
+Description=Import SSH keys from the boot partition
+RequiresMountsFor=/boot/efi
+ConditionPathExists=/boot/efi/authorized_keys
+Before=ssh.service sshd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ps5-ssh-keys
+
+[Install]
+WantedBy=multi-user.target

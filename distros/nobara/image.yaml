@@ -1,0 +1,318 @@
+image:
+  name: ps5-nobara
+  distribution: fedora
+  release: "44"
+  description: Nobara 44 (Fedora-based gaming distro) with KDE Plasma for PS5
+  architecture: x86_64
+
+source:
+  downloader: fedora-http
+  url: https://kojipkgs.fedoraproject.org
+  skip_verification: true
+
+packages:
+  manager: dnf
+  update: true
+  cleanup: true
+
+  sets:
+  - packages:
+    # Nobara (repos are switched to Nobara in post-unpack)
+    - nobara-welcome
+    - nobara-controller-config
+
+    # KDE Plasma desktop + SDDM display manager.
+    - plasma-workspace
+    - plasma-desktop
+    - kwin
+    - sddm
+    - sddm-breeze
+    - sddm-kcm
+    - konsole
+    - dolphin
+    - kate
+    - ark
+    - spectacle
+    - gwenview
+    - okular
+    - plasma-nm
+    - plasma-pa
+    - plasma-systemmonitor
+    - kscreen
+    - kinfocenter
+    - bluedevil
+    - powerdevil
+    - plasma-discover
+    - kde-gtk-config
+    - breeze-gtk
+    - xdg-desktop-portal-kde
+    - xdg-user-dirs
+    - xorg-x11-server-Xwayland
+    - polkit
+    - polkit-kde
+
+    # Bluetooth
+    - bluez
+    - bluez-tools
+
+    # Audio / media
+    - pipewire
+    - wireplumber
+    - pipewire-pulseaudio
+
+    # Display / GPU (AMD) — userspace GL/Vulkan only; the kernel amdgpu driver
+    # comes from the linux-ps5 rpm. amdgpu is loaded LATE (by udev after pivot),
+    # exactly like the working Arch/Ubuntu images — NOT forced into the initramfs.
+    - mesa-dri-drivers
+    - mesa-vulkan-drivers
+    - libinput
+
+    # Networking
+    - NetworkManager
+    - NetworkManager-wifi
+    - linux-firmware
+    - iw
+    - wpa_supplicant
+    - wireless-regdb
+    - util-linux
+
+    # System
+    - glibc-langpack-en
+    - openssh-server
+    - sudo
+    - nano
+    - dracut
+    - kmod
+    - e2fsprogs
+    - parted
+    - cloud-utils-growpart
+    - kexec-tools
+    - zram-generator-defaults
+    - firefox
+
+    # Fonts
+    - dejavu-sans-fonts
+    - liberation-fonts
+    - google-noto-sans-fonts
+    - google-noto-emoji-fonts
+    - fontconfig
+    action: install
+
+files:
+- path: /etc/hostname
+  generator: hostname
+
+- path: /etc/hosts
+  generator: hosts
+
+- path: /etc/machine-id
+  generator: dump
+
+- path: /etc/kernel/postinst.d/zz-update-boot
+  generator: copy
+  source: /tmp/build-staging/zz-update-boot
+  mode: "0755"
+
+- path: /etc/fstab
+  generator: copy
+  source: /tmp/build-staging/fstab
+
+- path: /usr/local/sbin/grow-rootfs
+  generator: copy
+  source: /tmp/build-staging/grow-rootfs
+  mode: "0755"
+
+- path: /etc/systemd/system/grow-rootfs.service
+  generator: copy
+  source: /tmp/build-staging/grow-rootfs.service
+
+- path: /etc/xdg/plasma-workspace/env/ps5-drm-bridge.sh
+  generator: copy
+  source: /tmp/build-staging/plasma-workspace-env-ps5.sh
+  mode: "0755"
+
+- path: /opt/rpms/
+  generator: copy
+  source: /tmp/build-staging/rpms
+
+actions:
+- trigger: post-unpack
+  action: |-
+    #!/bin/bash
+    set -eux
+    echo "retries=10" >> /etc/dnf/dnf.conf
+    dnf -y install cpio gnupg2
+
+    # --- Switch to Nobara -------------------------------------------------
+    # Accept the Nobara packages only if signed by the pinned 44 key.
+    NOBARA_FPR=993095EF51C21D41AA732A6A392D4FB85053B10D
+    cat > /etc/yum.repos.d/nobara-bootstrap.repo <<'EOF'
+    [nobara-bootstrap]
+    name=Nobara bootstrap (download only, verified below)
+    mirrorlist=https://mirrors.nobaraproject.org/rolling/$basearch/baseos
+    gpgcheck=0
+    enabled=0
+    EOF
+    tmp=$(mktemp -d)
+    dnf -y download --repo nobara-bootstrap --arch noarch --destdir "$tmp" nobara-gpg-keys nobara-repos
+    rm -f /etc/yum.repos.d/nobara-bootstrap.repo
+    mkdir "$tmp/x"
+    ( cd "$tmp/x" && rpm2cpio "$tmp"/nobara-gpg-keys-*.noarch.rpm | cpio -idm )
+    key="$tmp/x/etc/pki/rpm-gpg/RPM-GPG-KEY-nobara-baseos-pubkey-44"
+    got=$(gpg --show-keys --with-colons "$key" | awk -F: '$1=="fpr"{print $10; exit}')
+    [ "$got" = "$NOBARA_FPR" ] || { echo "Nobara key fingerprint mismatch: $got"; exit 1; }
+    rpm --import "$key"
+    for r in "$tmp"/*.rpm; do
+      rpm -K "$r" | grep -q 'signatures OK' || { echo "bad signature: $r"; exit 1; }
+    done
+    rpm -Uvh "$tmp"/nobara-gpg-keys-*.noarch.rpm "$tmp"/nobara-repos-*.noarch.rpm
+    rm -rf "$tmp"
+
+    # Only Nobara's repos: its Fedora snapshot replaces Fedora's mirrors.
+    for f in /etc/yum.repos.d/fedora*.repo; do
+      [ -f "$f" ] && sed -i 's/^enabled=1/enabled=0/' "$f"
+    done
+    # Never install a kernel package; linux-ps5 is the only kernel.
+    # NVIDIA repos are not needed on the PS5.
+    printf 'excludepkgs=kernel kernel-core kernel-modules* kernel-devel*\n' >> /etc/dnf/dnf.conf
+    sed -i 's/^enabled=1/enabled=0/' /etc/yum.repos.d/nv-*.repo /etc/yum.repos.d/nobara-kernel-*.repo
+    dnf -y makecache
+    # Swap the container identity package for Nobara's.
+    if rpm -q fedora-release-identity-container >/dev/null 2>&1; then
+      dnf -y swap fedora-release-identity-container nobara-release-identity-basic
+    fi
+    dnf -y distro-sync --allowerasing
+    dnf -y install --allowerasing nobara-release-kde
+
+- trigger: post-update
+  action: |-
+    #!/bin/bash
+    set -eux
+    passwd -l root
+
+- trigger: post-packages
+  action: |-
+    #!/bin/bash
+    set -eux
+    fc-cache -f 2>/dev/null || true
+
+    # SSH off by default (public default credentials); enable with systemctl
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/'               /etc/ssh/sshd_config
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    systemctl disable sshd.service 2>/dev/null || true
+    systemctl enable NetworkManager
+    systemctl enable sddm
+    systemctl enable bluetooth.service
+    systemctl set-default graphical.target
+
+    # The PS5 kernel patch writes into the request_firmware() buffer to skip
+    # Sony's signature header (gfx_v10_0_early_init, amdgpu_sdma_init_microcode).
+    # Firmware loaded from a .xz file is decompressed into pages the kernel
+    # maps PAGE_KERNEL_RO, so that write oopses and /dev/dri never appears.
+    # Fedora is the only distro shipping .xz firmware — Ubuntu/Arch use .zst
+    # (writable vzalloc buffer) and Debian/Kali ship raw .bin, which is why
+    # only this image black-screened. Keep the PS5 GPU firmware uncompressed.
+    # linux-firmware dedupes identical blobs as symlinks (mec2 -> mec) and
+    # unxz refuses symlinks, so materialize links first while targets exist.
+    cd /usr/lib/firmware/amdgpu
+    if ls cyan_skillfish*.xz >/dev/null 2>&1; then
+    for f in cyan_skillfish*.xz; do
+        if [ -L "$f" ]; then
+            tgt=$(readlink -f "$f")
+            rm "$f"
+            xz -dc "$tgt" > "${f%.xz}"
+        fi
+    done
+    unxz cyan_skillfish*.xz
+    fi
+    ls -la cyan_skillfish*
+
+- trigger: post-files
+  action: |-
+    #!/bin/bash
+    set -eux
+    systemctl enable grow-rootfs.service
+
+    # Built in a chroot → filesystem never SELinux-labelled. Disable SELinux.
+    mkdir -p /etc/selinux
+    if [ -f /etc/selinux/config ]; then
+        sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config
+    else
+        printf 'SELINUX=disabled\nSELINUXTYPE=targeted\n' > /etc/selinux/config
+    fi
+
+    # --- Default user + SDDM autologin into Plasma (Wayland) ---
+    useradd -m -G wheel,video,input,render -s /bin/bash ps5
+    echo "ps5:ps5" | chpasswd
+    echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel
+    mkdir -p /etc/sddm.conf.d
+    printf '[Autologin]\nUser=ps5\nSession=plasma\nRelogin=false\n' > /etc/sddm.conf.d/50-ps5-autologin.conf
+    # Plasma Login Manager may come in with Plasma; use SDDM.
+    systemctl disable plasmalogin.service 2>/dev/null || true
+    chown -R ps5:ps5 /home/ps5
+
+    # zram swap
+    printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
+
+    # --- Install custom kernel rpm (its %post builds initramfs + deploys boot) -
+    # amdgpu is NOT forced into the initramfs — it loads late via udev, exactly
+    # like the working Arch/Ubuntu images.
+    mkdir -p /boot/efi
+    # The kernel rpm is unsigned.
+    rpm -ivh --nosignature /opt/rpms/*.rpm
+    rm -rf /opt/rpms
+    KVER=$(ls -1t /lib/modules | head -1)
+    [ -f "/boot/efi/bzImage" ] && [ -f "/boot/efi/initrd.img" ]
+
+    # --- PS5 internal WiFi: firmware-stage + autoload service ---
+    # The mlan.ko/moal.ko modules and their modprobe.d options are already
+    # shipped by linux-ps5.rpm (built by kernel-builder/build.sh, which now
+    # applies all PS5 mwifiex patches in one place). The rpm ALSO ships
+    # /etc/modules-load.d/moal which would auto-load moal at boot before
+    # firmware has been copied from /boot/efi — kill that and let our
+    # ps5-iw620.service do the copy+load in the right order.
+    rm -f /etc/modules-load.d/moal
+    install -d /usr/local/sbin /etc/systemd/system /etc/modprobe.d /usr/share/doc/ps5-iw620
+    cat > /etc/modprobe.d/ps5-iw620-noautoload.conf <<'EOF'
+    blacklist moal
+    blacklist mlan
+    EOF
+    cat > /usr/local/sbin/ps5-iw620-load <<'EOF'
+    #!/bin/sh
+    set -eu
+    FW_NAME=nxp/pcieuartiw620_combo_v1.bin
+    FW_DST=/lib/firmware/$FW_NAME
+    FW_SRC=
+    for candidate in "/boot/efi/lib/$FW_NAME" "/boot/lib/$FW_NAME" "$FW_DST"; do
+      [ -f "$candidate" ] && { FW_SRC="$candidate"; break; }
+    done
+    [ -z "$FW_SRC" ] && FW_SRC="$(find /boot /boot/efi -path "*/$FW_NAME" -type f 2>/dev/null | head -n 1)"
+    [ -n "$FW_SRC" ] && [ -f "$FW_SRC" ] && install -D -m 0644 "$FW_SRC" "$FW_DST"
+    [ -f "$FW_DST" ] || { echo "PS5 IW620 firmware not found; skipping"; exit 0; }
+    if [ -d /sys/module/moal ] && [ ! -e /sys/bus/pci/drivers/wlan_pcie/0000:40:00.7 ]; then
+      modprobe -r moal mlan 2>/dev/null || true
+    fi
+    modprobe cfg80211 || true
+    modprobe moal
+    rfkill unblock all 2>/dev/null || true
+    nmcli radio wifi on 2>/dev/null || true
+    EOF
+    chmod 0755 /usr/local/sbin/ps5-iw620-load
+    cat > /etc/systemd/system/ps5-iw620.service <<'EOF'
+    [Unit]
+    Description=Load PS5 IW620 internal WiFi
+    RequiresMountsFor=/boot/efi
+    Wants=systemd-udev-settle.service
+    After=local-fs.target systemd-udev-settle.service
+    Before=NetworkManager.service network-pre.target
+
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/sbin/ps5-iw620-load
+    RemainAfterExit=yes
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    depmod -a "$KVER"
+    systemctl enable ps5-iw620.service

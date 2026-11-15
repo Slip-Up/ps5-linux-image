@@ -1,0 +1,12 @@
+[Unit]
+Description=Generate SSH host keys on first boot
+# The image is built without host keys so every console gets its own.
+ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key
+Before=ssh.service sshd.service ssh.socket
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -A
+
+[Install]
+WantedBy=multi-user.target

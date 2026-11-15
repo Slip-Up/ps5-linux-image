@@ -1,0 +1,29 @@
+#!/bin/sh
+# Import authorized_keys from the boot partition into ~ps5/.ssh, then rename
+# it to authorized_keys.imported.
+set -eu
+
+SRC=/boot/efi/authorized_keys
+USER_NAME=ps5
+
+[ -f "$SRC" ] || exit 0
+
+HOME_DIR=$(getent passwd "$USER_NAME" | cut -d: -f6)
+[ -n "$HOME_DIR" ] || { echo "user $USER_NAME not found"; exit 0; }
+
+DEST="$HOME_DIR/.ssh/authorized_keys"
+install -d -m 700 -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR/.ssh"
+touch "$DEST"
+
+# Strip CRs, keep key lines only, skip duplicates.
+tr -d '\r' < "$SRC" | while IFS= read -r line; do
+    case "$line" in
+        ''|'#'*) continue ;;
+    esac
+    grep -qxF "$line" "$DEST" || printf '%s\n' "$line" >> "$DEST"
+done
+
+chown "$USER_NAME:$USER_NAME" "$DEST"
+chmod 600 "$DEST"
+mv "$SRC" "$SRC.imported"
+echo "Imported SSH keys for $USER_NAME from $SRC"
