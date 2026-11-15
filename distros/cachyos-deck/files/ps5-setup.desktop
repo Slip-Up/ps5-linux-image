@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PS5 Setup (time zone, password, host name)
+Comment=Change the time zone, the password of user steam and the host name
+Exec=konsole -e sudo /usr/local/sbin/first-boot-setup
+Icon=preferences-system
+Terminal=false
+Categories=System;Settings;

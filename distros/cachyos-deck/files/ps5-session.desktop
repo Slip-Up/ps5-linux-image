@@ -1,0 +1,7 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=PS5 console session
+Comment=Steam game mode or the Plasma desktop, as chosen by steamos-session-select
+Exec=/usr/local/bin/ps5-session
+Type=Application
+DesktopNames=gamescope

@@ -1,0 +1,74 @@
+#!/bin/bash
+# Start screen with Steam's download progress until Steam's UI is up.
+# Gamescope shows nothing until Steam opens a window.
+
+MAX_WAIT=1800
+AFTER_UI=3
+TITLE="PS5 Linux" # also set in the QML file
+STEAM_CLIENT_APPID=769
+
+QML_BIN=/usr/lib/qt6/bin/qml
+QML_FILE=/usr/local/share/ps5-splash/ps5-splash.qml
+[ -x "$QML_BIN" ] && [ -r "$QML_FILE" ] || exit 0
+
+status="${XDG_RUNTIME_DIR:-/tmp}/ps5-splash.status"
+
+# percent, headline, detail
+put() {
+    printf '%s\n%s\n%s\n' "$1" "$2" "$3" > "$status.new" && mv -f "$status.new" "$status"
+}
+put -1 "Starting Steam" ""
+
+QT_QPA_PLATFORM=xcb QML_XHR_ALLOW_FILE_READ=1 QT_QUICK_CONTROLS_STYLE=Basic \
+    "$QML_BIN" "$QML_FILE" -- "$status" >/dev/null 2>&1 &
+ui_pid=$!
+
+# Gamescope only shows windows whose STEAM_GAME is on the base layer list.
+# Use Steam's client ID; Steam replaces the list when it starts.
+if command -v xprop >/dev/null 2>&1; then
+    for _ in $(seq 1 75); do
+        if xprop -name "$TITLE" -f STEAM_GAME 32c -set STEAM_GAME "$STEAM_CLIENT_APPID" >/dev/null 2>&1; then
+            if ! xprop -root GAMESCOPECTRL_BASELAYER_APPID 2>/dev/null | grep -q '= '; then
+                xprop -root -f GAMESCOPECTRL_BASELAYER_APPID 32c -set GAMESCOPECTRL_BASELAYER_APPID "$STEAM_CLIENT_APPID"
+            fi
+            break
+        fi
+        kill -0 "$ui_pid" 2>/dev/null || exit 0
+        sleep 0.2
+    done
+fi
+
+# [  8%] Downloading update (45395 of 504927 KB)...
+journalctl --user --follow --lines=20 --output=cat --user-unit=steam-launcher.service 2>/dev/null |
+while IFS= read -r line; do
+    if [[ $line =~ ^\[\ *([0-9]+)%\]\ Downloading\ update ]]; then
+        put "${BASH_REMATCH[1]}" "Setting up Steam" "Downloading the Steam client"
+    elif [[ $line =~ ^\[.{4}\]\ (Extracting|Installing) ]]; then
+        put -1 "Setting up Steam" "Installing"
+    fi
+done &
+follow_pid=$!
+
+cleanup() {
+    pkill -P "$follow_pid" 2>/dev/null
+    kill "$follow_pid" 2>/dev/null
+    printf 'quit\n' > "$status.new" && mv -f "$status.new" "$status"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$ui_pid" 2>/dev/null || break
+        sleep 0.2
+    done
+    kill "$ui_pid" 2>/dev/null
+    rm -f "$status" "$status.new"
+}
+trap 'cleanup; exit 0' TERM INT
+
+waited=0
+until pgrep -u "$(id -u)" -x steamwebhelper >/dev/null 2>&1; do
+    kill -0 "$ui_pid" 2>/dev/null || break
+    [ "$waited" -ge "$MAX_WAIT" ] && break
+    sleep 1
+    waited=$((waited + 1))
+done
+sleep "$AFTER_UI"
+cleanup
+exit 0

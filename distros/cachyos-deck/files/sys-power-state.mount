@@ -1,0 +1,16 @@
+# Steam goes black when logind refuses sleep. Report "mem" so it is accepted;
+# ps5-sleep.conf turns the suspend into a 2 s pause.
+[Unit]
+Description=PS5: stand-in sleep state list
+DefaultDependencies=no
+ConditionPathExists=/sys/power/state
+Before=systemd-logind.service
+
+[Mount]
+What=/usr/local/share/ps5-power-state
+Where=/sys/power/state
+Type=none
+Options=bind
+
+[Install]
+WantedBy=sysinit.target

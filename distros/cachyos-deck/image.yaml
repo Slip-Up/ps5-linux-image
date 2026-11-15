@@ -1,0 +1,411 @@
+image:
+  name: ps5-cachyos-deck
+  distribution: archlinux
+  description: Arch + CachyOS game mode session — boots into Steam (Gamescope), KDE Plasma as desktop
+  architecture: x86_64
+
+source:
+  downloader: archlinux-http
+  url: https://geo.mirror.pkgbuild.com/iso
+  skip_verification: true
+
+packages:
+  manager: pacman
+  # Do not "pacman -Su" the whole bootstrap: CachyOS *-v3 replaces glibc/pacman, breaks Docker/QEMU hooks and multilib.
+  update: false
+  cleanup: true
+
+  repositories:
+  - name: mirrorlist
+    url: |-
+      Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+
+  sets:
+  - packages:
+    # SteamOS game mode session
+    - gamescope-session-cachyos
+    # Steam's on-screen keyboard in games (optional dependency)
+    - ibus
+    # ps5-splash
+    - qt6-declarative
+    - xorg-xprop
+    - gamescope
+    - multilib/steam
+    - mangohud
+    - gamemode
+    - multilib/lib32-mesa
+    - multilib/lib32-vulkan-radeon
+    - multilib/lib32-mangohud
+    - xorg-xwayland
+    - xorg-xinit
+
+    # KDE Plasma desktop
+    - plasma-meta
+    - sddm
+    - xorg-server
+    - qt6-wayland
+    - egl-wayland
+    - konsole
+    - dolphin
+
+    # Bluetooth
+    - bluez
+    - bluez-utils
+
+    # Audio / media
+    - pipewire
+    - wireplumber
+    - pipewire-pulse
+
+    # Display / GPU (AMD) — qualify extra/ so pacman does not prompt vs [cachyos] mesa
+    - extra/mesa
+    - extra/vulkan-radeon
+    - extra/libva-mesa-driver
+    - extra/xf86-video-amdgpu
+    - libinput
+    - xkeyboard-config
+
+    # Networking
+    - networkmanager
+    - linux-firmware
+    - wireless-regdb
+    # GIO module libgiognutls.so (KDE/Konsole, GVfs, etc.): needs gnutls → nettle (libhogweed).
+    # Explicit install avoids a sparse dependency tree under distrobuilder cleanup: true.
+    - gnutls
+    - nettle
+    - glib-networking
+
+    # System
+    - base
+    - openssh
+    - sudo
+    - nano
+    - bash
+    - mkinitcpio
+    - kmod
+    - e2fsprogs
+    - cloud-utils
+    - parted
+    - polkit
+    - dbus
+    - kexec-tools
+    - zram-generator
+    - curl
+    - dialog
+
+    # Fonts (Steam UI + KDE) — CJK + emoji avoid "tofu" boxes in Steam Big Picture language list
+    - ttf-dejavu
+    - ttf-liberation
+    - noto-fonts
+    - noto-fonts-cjk
+    - noto-fonts-emoji
+    - fontconfig
+    action: install
+
+files:
+- path: /etc/hostname
+  generator: hostname
+
+- path: /etc/hosts
+  generator: hosts
+
+- path: /etc/kernel/postinst.d/zz-update-boot
+  generator: copy
+  source: /tmp/build-staging/zz-update-boot
+  mode: "0755"
+
+- path: /etc/fstab
+  generator: copy
+  source: /tmp/build-staging/fstab
+
+- path: /usr/local/sbin/grow-rootfs
+  generator: copy
+  source: /tmp/build-staging/files/grow-rootfs
+  mode: "0755"
+
+- path: /etc/systemd/system/grow-rootfs.service
+  generator: copy
+  source: /tmp/build-staging/files/grow-rootfs.service
+
+- path: /opt/pkgs/
+  generator: copy
+  source: /tmp/build-staging/pkgs
+
+- path: /usr/local/sbin/first-boot-setup
+  generator: copy
+  source: /tmp/build-staging/files/first-boot-setup
+  mode: "0755"
+
+- path: /etc/sddm.conf.d/zzz-ps5-autologin.conf
+  generator: copy
+  source: /tmp/build-staging/files/sddm-ps5-autologin.conf
+
+- path: /usr/local/bin/ps5-session
+  generator: copy
+  source: /tmp/build-staging/files/ps5-session
+  mode: "0755"
+
+- path: /usr/share/wayland-sessions/ps5-session.desktop
+  generator: copy
+  source: /tmp/build-staging/files/ps5-session.desktop
+
+- path: /usr/local/bin/ps5-splash
+  generator: copy
+  source: /tmp/build-staging/files/ps5-splash
+  mode: "0755"
+
+- path: /usr/local/share/ps5-splash/ps5-splash.qml
+  generator: copy
+  source: /tmp/build-staging/files/ps5-splash.qml
+
+- path: /etc/systemd/user/ps5-splash.service
+  generator: copy
+  source: /tmp/build-staging/files/ps5-splash.service
+
+- path: /etc/systemd/user/gamescope-session.service.d/ps5.conf
+  generator: copy
+  source: /tmp/build-staging/files/gamescope-session-ps5.conf
+
+- path: /usr/local/sbin/ps5-kexec-load
+  generator: copy
+  source: /tmp/build-staging/files/ps5-kexec-load
+  mode: "0755"
+
+- path: /etc/systemd/system/ps5-kexec-load.service
+  generator: copy
+  source: /tmp/build-staging/files/ps5-kexec-load.service
+
+- path: /usr/local/sbin/ps5-restart
+  generator: copy
+  source: /tmp/build-staging/files/ps5-restart
+  mode: "0755"
+
+- path: /etc/systemd/system/systemd-reboot.service.d/ps5-restart.conf
+  generator: copy
+  source: /tmp/build-staging/files/ps5-restart.conf
+
+- path: /usr/local/share/ps5-power-state
+  generator: copy
+  source: /tmp/build-staging/files/ps5-power-state
+
+- path: /etc/systemd/system/sys-power-state.mount
+  generator: copy
+  source: /tmp/build-staging/files/sys-power-state.mount
+
+- path: /etc/systemd/system/systemd-suspend.service.d/ps5-sleep.conf
+  generator: copy
+  source: /tmp/build-staging/files/ps5-sleep.conf
+
+- path: /usr/local/lib/ps5-os-disk
+  generator: copy
+  source: /tmp/build-staging/files/ps5-os-disk
+  mode: "0755"
+
+- path: /etc/udev/rules.d/99-holo-automount.rules
+  generator: copy
+  source: /tmp/build-staging/files/99-holo-automount.rules
+
+- path: /usr/share/applications/return-to-gaming-mode.desktop
+  generator: copy
+  source: /tmp/build-staging/files/return-to-gaming-mode.desktop
+
+- path: /usr/share/applications/ps5-setup.desktop
+  generator: copy
+  source: /tmp/build-staging/files/ps5-setup.desktop
+
+- path: /usr/local/share/ps5-steam-config.vdf
+  generator: copy
+  source: /tmp/build-staging/files/steam-config.vdf
+
+- path: /usr/local/share/ps5-display.lua
+  generator: copy
+  source: /tmp/build-staging/files/ps5-display.lua
+
+- path: /usr/local/share/plasma-workspace-env-ps5.sh
+  generator: copy
+  source: /tmp/build-staging/files/plasma-workspace-env-ps5.sh
+  mode: "0755"
+
+actions:
+- trigger: post-unpack
+  action: |-
+    #!/bin/bash
+    set -eux
+    # Pacman 7 Landlock sandbox is unsupported under QEMU; disable it.
+    sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+    # Let stalled downloads recover instead of failing the build
+    sed -i '/^\[options\]/a DisableDownloadTimeout' /etc/pacman.conf
+
+    CACHYOS_PKG="https://mirror.cachyos.org/repo/x86_64/cachyos"
+
+    pacman-key --init
+    pacman-key --populate archlinux
+
+    pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com
+    pacman-key --lsign-key F3B607488DB35A47
+
+    # Keyring + main mirrorlist only (no *-v3 repos — those force a full distro migration in the chroot).
+    pacman -U --noconfirm \
+      "${CACHYOS_PKG}/cachyos-keyring-20240331-1-any.pkg.tar.zst" \
+      "${CACHYOS_PKG}/cachyos-mirrorlist-27-1-any.pkg.tar.zst"
+
+    # Optional CachyOS packages: repo listed *after* Arch so core/extra/multilib win on conflicts (mesa, steam deps).
+    if ! grep -q '^\[cachyos\]' /etc/pacman.conf; then
+      printf '\n[cachyos]\nInclude = /etc/pacman.d/cachyos-mirrorlist\n' >> /etc/pacman.conf
+    fi
+
+    # Enable #[multilib] / #Include block (\\\\ in YAML would break the sed address regex)
+    sed -i '/^#\[multilib\]/,/^#Include/s/^#//' /etc/pacman.conf
+
+    # Keep CI on a small stable mirror set. The full active global list can
+    # select slow mirrors and fail pacman's low-speed download timeout.
+    cat > /etc/pacman.d/mirrorlist <<'EOF'
+    Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+    Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
+    EOF
+
+    pacman -Syy --noconfirm
+
+
+- trigger: post-packages
+  action: |-
+    #!/bin/bash
+    set -eux
+    # fc-cache / systemctl can SIGSEGV under QEMU when image plat is linux/amd64 on arm64 hosts.
+    fc-cache -f 2>/dev/null || true
+
+    symlink_wants() {
+      local src=$1
+      local target=$2
+      [ -e "$src" ] || return 0
+      local base
+      base=$(basename "$src")
+      mkdir -p "/etc/systemd/system/${target}.wants"
+      ln -sf "$src" "/etc/systemd/system/${target}.wants/${base}"
+    }
+
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/'               /etc/ssh/sshd_config
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    symlink_wants /usr/lib/systemd/system/sshd.service multi-user.target
+    symlink_wants /usr/lib/systemd/system/NetworkManager.service multi-user.target
+    # PipeWire/WirePlumber: user session after tty autologin; default.target matches Arch Sway image.
+    for s in pipewire pipewire-pulse wireplumber; do
+      symlink_wants "/usr/lib/systemd/system/${s}.service" default.target || true
+    done
+
+- trigger: post-files
+  action: |-
+    #!/bin/bash
+    set -eux
+    mkdir -p /etc/systemd/system/local-fs.target.wants
+    ln -sf /etc/systemd/system/grow-rootfs.service \
+      /etc/systemd/system/local-fs.target.wants/grow-rootfs.service
+
+    systemctl enable bluetooth.service
+
+    # zram swap: half of RAM, zstd compressed
+    printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
+
+    # Steam's first-time setup stops unless steamos-update says "no update"
+    if [ ! -e /usr/bin/steamos-update ]; then
+      printf '#!/bin/bash\n# Stub: no SteamOS OTA on this image\nexit 7\n' \
+        > /usr/bin/steamos-update
+      chmod +x /usr/bin/steamos-update
+    fi
+
+    useradd -m -G wheel,seat,video,audio,input -s /bin/bash steam
+    echo "steam:steam" | chpasswd
+    echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel
+
+    # Autologin (files/sddm-ps5-autologin.conf)
+    ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
+    ln -sf /usr/lib/systemd/system/sddm.service /etc/systemd/system/display-manager.service
+    # Setup runs from the desktop shortcut, not at first boot
+    ln -sf /dev/null /etc/systemd/system/systemd-firstboot.service
+    touch /etc/ps5-first-boot-done
+
+    # Restart by kexec (files/ps5-kexec-load)
+    mkdir -p /etc/systemd/system/multi-user.target.wants
+    ln -sf /etc/systemd/system/ps5-kexec-load.service \
+        /etc/systemd/system/multi-user.target.wants/ps5-kexec-load.service
+
+    # Start screen (files/ps5-splash)
+    mkdir -p /etc/systemd/user/gamescope-session.target.wants
+    ln -sf /etc/systemd/user/ps5-splash.service         /etc/systemd/user/gamescope-session.target.wants/ps5-splash.service
+
+    # Session units that cannot run here (no xbindkeysrc, no steam_notif_daemon)
+    ln -sf /dev/null /etc/systemd/user/gamescope-xbindkeys.service
+    ln -sf /dev/null /etc/systemd/user/steam-notif-daemon.service
+
+    # Sleep is a 2 s pause (files/sys-power-state.mount)
+    mkdir -p /etc/systemd/system/sysinit.target.wants
+    ln -sf /etc/systemd/system/sys-power-state.mount /etc/systemd/system/sysinit.target.wants/sys-power-state.mount
+
+    # Steam Deck firmware updaters
+    ln -sf /dev/null /etc/systemd/system/jupiter-biosupdate.service
+    ln -sf /dev/null /etc/systemd/system/jupiter-controller-update.service
+
+    mkdir -p /home/steam/.config
+    # User PipeWire (systemd --user): post-packages symlinks system default.target, which does
+    # not pull user units. Enable sockets/services under the steam user's default.target so
+    # Plasma (real session bus) can connect to PipeWire.
+    mkdir -p /home/steam/.config/systemd/user/default.target.wants
+    for u in /usr/lib/systemd/user/pipewire.socket /usr/lib/systemd/user/pipewire-pulse.socket \
+             /usr/lib/systemd/user/wireplumber.service; do
+      [ -e "$u" ] || continue
+      ln -sf "$u" "/home/steam/.config/systemd/user/default.target.wants/$(basename "$u")"
+    done
+    chown -R steam:steam /home/steam/.config/systemd
+
+    # Gamescope display profile: force sRGB colorimetry so gamescope does not set
+    # BT2020_RGB on the DP connector. The PS5's internal DP->HDMI bridge cannot
+    # correctly translate BT2020 signalling to HDMI, causing a black screen.
+    # Staged via files: to /usr/local/share/ps5-display.lua to avoid heredoc
+    # indentation conflicts with the YAML literal block scalar.
+    mkdir -p /home/steam/.config/gamescope/scripts
+    cp /usr/local/share/ps5-display.lua /home/steam/.config/gamescope/scripts/ps5-display.lua
+
+    # Plasma: HDR off on the desktop
+    mkdir -p /home/steam/.config/plasma-workspace/env
+    cp /usr/local/share/plasma-workspace-env-ps5.sh \
+      /home/steam/.config/plasma-workspace/env/ps5-drm-bridge.sh
+    chmod +x /home/steam/.config/plasma-workspace/env/ps5-drm-bridge.sh
+
+    # Steam turns Bluetooth off at first start unless this is set
+    mkdir -p /home/steam/.local/share/Steam/config
+    cp /usr/local/share/ps5-steam-config.vdf       /home/steam/.local/share/Steam/config/config.vdf
+
+    # KDE Desktop shortcuts. chmod +x lets KDE run them without an "untrusted" dialog.
+    mkdir -p /home/steam/Desktop
+    cp /usr/share/applications/return-to-gaming-mode.desktop /home/steam/Desktop/
+    cp /usr/share/applications/ps5-setup.desktop /home/steam/Desktop/
+    chmod +x /home/steam/Desktop/*.desktop
+
+    chown -R steam:steam /home/steam
+
+    [ -f /etc/vconsole.conf ] || echo "KEYMAP=us" > /etc/vconsole.conf
+
+    # Busybox-based initrd: polls for the root device (works after kexec, unlike
+    # the systemd initrd which waits for udev events that never re-fire).
+    # `kms` loads the amdgpu module + firmware early so the display comes up
+    # before the rootfs is mounted. `keyboard` allows emergency-mode input.
+    sed -i \
+      -e 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard block filesystems fsck)/' \
+      -e 's/^MODULES=.*/MODULES=(amdgpu)/' \
+      /etc/mkinitcpio.conf
+
+    if ls /opt/pkgs/*.pkg.tar.zst 1>/dev/null 2>&1; then
+        pacman -U --noconfirm --ask 4 /opt/pkgs/*.pkg.tar.zst
+        rm -rf /opt/pkgs
+        KVER=$(ls -1t /lib/modules | head -1)
+        mkinitcpio -k "$KVER" -g "/boot/initrd.img-$KVER" || true
+    fi
+
+    # Undo DisableDownloadTimeout from post-unpack
+    sed -i '/^DisableDownloadTimeout$/d' /etc/pacman.conf
+
+    mkdir -p /boot/efi
+    /etc/kernel/postinst.d/zz-update-boot
+
+mappings:
+  architecture_map: archlinux

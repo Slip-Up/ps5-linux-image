@@ -1,0 +1,21 @@
+#!/bin/sh
+# Load the boot partition kernel so a restart kexecs instead of going back to
+# the PS5 system software. no-kexec-restart on the boot partition turns it off.
+set -eu
+BOOT=/boot/efi
+
+if [ -e "$BOOT/no-kexec-restart" ]; then
+    echo "ps5-kexec-load: $BOOT/no-kexec-restart exists, restart stays a real reboot"
+    kexec -u 2>/dev/null || true
+    exit 0
+fi
+for f in bzImage initrd.img cmdline.txt; do
+    if [ ! -s "$BOOT/$f" ]; then
+        echo "ps5-kexec-load: $BOOT/$f missing, restart stays a real reboot"
+        exit 0
+    fi
+done
+
+kexec -l "$BOOT/bzImage" --initrd="$BOOT/initrd.img" \
+    --command-line="$(cat "$BOOT/cmdline.txt")"
+echo "ps5-kexec-load: kernel loaded, restart will kexec"

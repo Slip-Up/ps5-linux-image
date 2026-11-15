@@ -1,0 +1,11 @@
+[Unit]
+Description=PS5: start screen until Steam is up
+PartOf=gamescope-session.target
+After=gamescope-session.service
+
+[Service]
+Type=simple
+EnvironmentFile=%t/gamescope-environment
+ExecStart=/usr/local/bin/ps5-splash
+Restart=no
+TimeoutStopSec=5

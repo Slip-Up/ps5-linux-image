@@ -1,0 +1,14 @@
+[Unit]
+Description=PS5: load the kernel for a kexec restart
+RequiresMountsFor=/boot/efi
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ps5-kexec-load
+# Load again before shutdown, so a kernel updated in this boot is the one started.
+ExecStop=/usr/local/sbin/ps5-kexec-load
+
+[Install]
+WantedBy=multi-user.target

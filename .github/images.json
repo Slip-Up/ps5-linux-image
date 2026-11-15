@@ -2,6 +2,7 @@
   { "key": "ubuntu2604",    "label": "Ubuntu 26.04" },
   { "key": "arch",          "label": "Arch" },
   { "key": "cachyos",       "label": "CachyOS" },
+  { "key": "cachyos-deck",  "label": "CachyOS Deck UI" },
   { "key": "fedora",        "label": "Fedora 44" },
   { "key": "proxmox",       "label": "Proxmox VE 8" },
   { "key": "debian",        "label": "Debian 12" },

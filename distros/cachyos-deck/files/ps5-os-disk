@@ -1,0 +1,22 @@
+#!/bin/sh
+# ps5-os-disk <name>: exit 0 if the block device is on the root disk (or the
+# root disk cannot be found), 1 otherwise.
+
+disk_of() {
+    p=$(readlink -f "/sys/class/block/$1" 2>/dev/null) || return 1
+    [ -d "$p" ] || return 1
+    if [ -e "$p/partition" ]; then
+        p=$(dirname "$p")
+    fi
+    basename "$p"
+}
+
+[ -n "$1" ] || exit 0
+
+root_src=$(findmnt -vno SOURCE / 2>/dev/null) || exit 0
+root_dev=$(readlink -f "$root_src" 2>/dev/null) || exit 0
+root_disk=$(disk_of "$(basename "$root_dev")") || exit 0
+dev_disk=$(disk_of "$1") || exit 0
+
+[ "$root_disk" = "$dev_disk" ] && exit 0
+exit 1

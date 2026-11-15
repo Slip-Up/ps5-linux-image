@@ -1,0 +1,10 @@
+"InstallConfigStore"
+{
+	"system"
+	{
+		"Bluetooth"
+		{
+			"Enabled"		"1"
+		}
+	}
+}

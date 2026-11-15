@@ -114,6 +114,11 @@ EOF
             mkdir -p "$STAGING/pkgs"
             cp /kernel-debs/*.pkg.tar.zst                  "$STAGING/pkgs/"
             ;;
+        cachyos-deck)
+            mkdir -p "$STAGING/files" "$STAGING/pkgs"
+            cp /repo/distros/cachyos-deck/files/*                     "$STAGING/files/"
+            cp /kernel-debs/*.pkg.tar.zst                             "$STAGING/pkgs/"
+            ;;
         cachyos)
             mkdir -p "$STAGING/files"
             cp /repo/distros/cachyos/files/grow-rootfs                "$STAGING/files/"

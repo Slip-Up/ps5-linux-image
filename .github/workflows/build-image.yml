@@ -9,7 +9,7 @@ on:
         default: 'ubuntu2604'
         type: choice
         # Keep in step with .github/images.json.
-        options: [all, ubuntu2604, arch, cachyos, fedora, proxmox, debian, debian13, bazzite, bazzite-deck, steamos, ubuntu-server, kubuntu2604, fedora-kde, debian-server, nobara, endeavouros, linuxmint, popos]
+        options: [all, ubuntu2604, arch, cachyos, cachyos-deck, fedora, proxmox, debian, debian13, bazzite, bazzite-deck, steamos, ubuntu-server, kubuntu2604, fedora-kde, debian-server, nobara, endeavouros, linuxmint, popos]
   workflow_call:
     inputs:
       distro:

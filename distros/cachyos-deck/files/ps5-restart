@@ -1,0 +1,5 @@
+#!/bin/sh
+if [ "$(cat /sys/kernel/kexec_loaded 2>/dev/null)" = 1 ]; then
+    exec /usr/bin/systemctl --force kexec
+fi
+exec /usr/bin/systemctl --force reboot
