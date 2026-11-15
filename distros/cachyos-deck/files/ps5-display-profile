@@ -1,0 +1,34 @@
+#!/bin/sh
+# Offer HDR in game mode only where the kernel sends it (FLAVA3, or VERDE with
+# hdmi.verde_infoframes=1). Elsewhere declare the display sRGB.
+# no-hdr on the boot partition turns HDR off everywhere.
+SCRIPT=/usr/local/share/ps5-display.lua
+DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gamescope/scripts"
+LINK="$DIR/ps5-display.lua"
+BOOT=/boot/efi
+
+[ -r "$SCRIPT" ] || exit 0
+
+ic=$(journalctl -k -b --no-pager -o cat -g 'HDMI IC Type' 2>/dev/null | head -n 1)
+[ -n "$ic" ] || ic=$(dmesg 2>/dev/null | grep -m 1 'HDMI IC Type')
+
+hdr=no
+why="converter not known"
+case "$ic" in
+    *'[FLAVA3]'*) hdr=yes; why="FLAVA3 converter" ;;
+    *'['*']'*)    why="converter ${ic##*[}"; why="${why%]*}" ;;
+esac
+if [ -e "$BOOT/no-hdr" ]; then
+    hdr=no
+    why="$BOOT/no-hdr exists"
+fi
+
+mkdir -p "$DIR" || exit 0
+rm -f "$LINK"
+if [ "$hdr" = yes ]; then
+    echo "ps5-display-profile: HDR offered ($why)"
+else
+    cp "$SCRIPT" "$LINK" || exit 0
+    echo "ps5-display-profile: display declared sRGB, no HDR ($why)"
+fi
+exit 0

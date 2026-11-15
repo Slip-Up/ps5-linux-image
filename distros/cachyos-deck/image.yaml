@@ -201,6 +201,11 @@ files:
   source: /tmp/build-staging/files/ps5-display-reset
   mode: "0755"
 
+- path: /usr/local/lib/ps5-display-profile
+  generator: copy
+  source: /tmp/build-staging/files/ps5-display-profile
+  mode: "0755"
+
 - path: /usr/local/lib/ps5-os-disk
   generator: copy
   source: /tmp/build-staging/files/ps5-os-disk
@@ -362,11 +367,7 @@ actions:
     done
     chown -R steam:steam /home/steam/.config/systemd
 
-    # Gamescope display profile: force sRGB colorimetry so gamescope does not set
-    # BT2020_RGB on the DP connector. The PS5's internal DP->HDMI bridge cannot
-    # correctly translate BT2020 signalling to HDMI, causing a black screen.
-    # Staged via files: to /usr/local/share/ps5-display.lua to avoid heredoc
-    # indentation conflicts with the YAML literal block scalar.
+    # sRGB until ps5-display-profile decides at each game mode start
     mkdir -p /home/steam/.config/gamescope/scripts
     cp /usr/local/share/ps5-display.lua /home/steam/.config/gamescope/scripts/ps5-display.lua
 

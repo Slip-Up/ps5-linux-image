@@ -1,6 +1,4 @@
--- Force sRGB colorimetry so gamescope does not set BT2020_RGB on the DP
--- connector. The PS5's internal DP->HDMI bridge cannot correctly translate
--- BT2020 signalling to HDMI, causing a black screen.
+-- Plain sRGB, no HDR. Installed by ps5-display-profile.
 gamescope.config.known_displays.ps5_srgb_override = {
     pretty_name = "PS5 sRGB Override",
     hdr = {
