@@ -53,8 +53,37 @@ LABEL=$ROOT_LABEL / ext4 defaults 0 1
 LABEL=$EFI_LABEL /boot/efi vfat defaults 0 1
 EOF
     cp /repo/distros/${DISTRO}/nm-dns.conf       "$STAGING/" 2>/dev/null || true
+    # Shared helpers some images use: headless SSH key import, KDE env fix.
+    cp /repo/distros/shared/ps5-ssh-keys          "$STAGING/"
+    cp /repo/distros/shared/ps5-ssh-keys.service  "$STAGING/"
+    cp /repo/distros/shared/ps5-ssh-hostkeys.service "$STAGING/"
+    cp /repo/distros/cachyos/files/plasma-workspace-env-ps5.sh "$STAGING/"
 
     case "$DISTRO" in
+        # Images that reuse another distro's helper files.
+        ubuntu-server|kubuntu2604|linuxmint|popos)
+            cp /repo/distros/ubuntu2604/grow-rootfs         "$STAGING/"
+            cp /repo/distros/ubuntu2604/grow-rootfs.service "$STAGING/"
+            cp /repo/distros/ubuntu2604/nm-dns.conf         "$STAGING/"
+            cp /kernel-debs/*.deb                           "$STAGING/debs/"
+            ;;
+        debian-server)
+            cp /repo/distros/debian/grow-rootfs             "$STAGING/"
+            cp /repo/distros/debian/grow-rootfs.service     "$STAGING/"
+            cp /kernel-debs/*.deb                           "$STAGING/debs/"
+            ;;
+        fedora-kde|nobara)
+            cp /repo/distros/fedora/grow-rootfs             "$STAGING/"
+            cp /repo/distros/fedora/grow-rootfs.service     "$STAGING/"
+            mkdir -p "$STAGING/rpms"
+            cp /kernel-debs/*.rpm                           "$STAGING/rpms/"
+            ;;
+        endeavouros)
+            cp /repo/distros/arch/grow-rootfs               "$STAGING/"
+            cp /repo/distros/arch/grow-rootfs.service       "$STAGING/"
+            mkdir -p "$STAGING/pkgs"
+            cp /kernel-debs/*.pkg.tar.zst                   "$STAGING/pkgs/"
+            ;;
         ubuntu*)
             cp /repo/distros/${DISTRO}/grow-rootfs       "$STAGING/"
             cp /repo/distros/${DISTRO}/grow-rootfs.service "$STAGING/"
@@ -116,7 +145,7 @@ fi
 
 # --- Post-distrobuilder fixups ---
 case "$DISTRO" in
-    ubuntu*)
+    ubuntu*|kubuntu*|linuxmint|popos)
         rm -f "$CHROOT/etc/resolv.conf"
         ln -sf /run/systemd/resolve/stub-resolv.conf "$CHROOT/etc/resolv.conf"
         ;;

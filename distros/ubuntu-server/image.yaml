@@ -1,0 +1,208 @@
+image:
+  name: ps5-ubuntu-server
+  distribution: ubuntu
+  release: resolute
+  description: Ubuntu Resolute server (headless, SSH) for PS5
+  architecture: x86_64
+
+source:
+  downloader: debootstrap
+  url: http://archive.ubuntu.com/ubuntu
+  variant: minbase
+  keyserver: keyserver.ubuntu.com
+  keys:
+  - 0x790BC7277767219C42C86F933B4FE6ACC0B21F32
+  - 0xf6ecb3762474eda9d21b7022871920d1991bc93c
+
+packages:
+  manager: apt
+  update: true
+  cleanup: true
+
+  repositories:
+  - name: sources.list
+    url: |-
+      deb http://archive.ubuntu.com/ubuntu {{ image.release }} main restricted universe multiverse
+      deb http://archive.ubuntu.com/ubuntu {{ image.release }}-updates main restricted universe multiverse
+      deb http://security.ubuntu.com/ubuntu {{ image.release }}-security main restricted universe multiverse
+    architectures:
+    - amd64
+
+  sets:
+  - packages:
+    # Lean server base. No ubuntu-server metapackage: it pulls cloud-init
+    # (waits for a datasource at every boot), snapd, lxd and multipath.
+    - ubuntu-minimal
+    - ubuntu-standard
+    - openssh-server
+    - sudo
+    - nano
+    - vim
+    - tmux
+    - htop
+    - curl
+    - wget
+    - ca-certificates
+    - git
+    - build-essential
+    - less
+    - bash-completion
+
+    # Networking: NetworkManager so Wi-Fi works headless (nmcli / nmtui)
+    - network-manager
+    - iw
+    - wpasupplicant
+    - rfkill
+    - wireless-regdb
+    - iputils-ping
+    - ethtool
+
+    # Bluetooth
+    - bluetooth
+    - bluez
+    - bluez-tools
+
+    # GPU compute userspace (Vulkan / VA-API, e.g. llama.cpp Vulkan)
+    - mesa-vulkan-drivers
+    - mesa-va-drivers
+    - vulkan-tools
+
+    # Firmware + PS5 boot support
+    - linux-firmware
+    - initramfs-tools
+    - kmod
+    - cloud-guest-utils
+    - parted
+    - kexec-tools
+    - systemd-zram-generator
+    - usbutils
+    - pciutils
+    action: install
+
+files:
+- path: /etc/hostname
+  generator: hostname
+
+- path: /etc/hosts
+  generator: hosts
+
+- path: /etc/machine-id
+  generator: dump
+
+- path: /etc/NetworkManager/conf.d/dns.conf
+  generator: copy
+  source: /tmp/build-staging/nm-dns.conf
+
+- path: /etc/kernel/postinst.d/zz-update-boot
+  generator: copy
+  source: /tmp/build-staging/zz-update-boot
+  mode: "0755"
+
+- path: /etc/fstab
+  generator: copy
+  source: /tmp/build-staging/fstab
+
+- path: /usr/local/sbin/grow-rootfs
+  generator: copy
+  source: /tmp/build-staging/grow-rootfs
+  mode: "0755"
+
+- path: /etc/systemd/system/grow-rootfs.service
+  generator: copy
+  source: /tmp/build-staging/grow-rootfs.service
+
+- path: /usr/local/sbin/ps5-ssh-keys
+  generator: copy
+  source: /tmp/build-staging/ps5-ssh-keys
+  mode: "0755"
+
+- path: /etc/systemd/system/ps5-ssh-keys.service
+  generator: copy
+  source: /tmp/build-staging/ps5-ssh-keys.service
+
+- path: /etc/systemd/system/ps5-ssh-hostkeys.service
+  generator: copy
+  source: /tmp/build-staging/ps5-ssh-hostkeys.service
+
+- path: /opt/debs/
+  generator: copy
+  source: /tmp/build-staging/debs
+
+actions:
+- trigger: post-unpack
+  action: |-
+    #!/bin/bash
+    set -eux
+    rm -f /var/lib/apt/lists/*InRelease /var/lib/apt/lists/*Release /var/lib/apt/lists/*Packages* || true
+    echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80retry
+    apt-get update
+
+- trigger: post-update
+  action: |-
+    #!/bin/bash
+    set -eux
+    passwd -l root
+
+- trigger: post-packages
+  action: |-
+    #!/bin/bash
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Default user ps5/ps5. The password must be changed at the first login
+    # (console or SSH), so the public default never stays usable.
+    useradd -m -G sudo,video,render,input -s /bin/bash ps5
+    echo "ps5:ps5" | chpasswd
+    chage -d 0 ps5
+
+    printf 'ps5\n' > /etc/hostname
+    if grep -q '^127\.0\.1\.1' /etc/hosts; then
+      sed -i 's/^127\.0\.1\.1.*/127.0.1.1 ps5/' /etc/hosts
+    else
+      printf '127.0.1.1 ps5\n' >> /etc/hosts
+    fi
+
+    # Headless: SSH on at boot. Keyboard-interactive lets an expired password
+    # be changed over SSH. Keys can be dropped on the boot partition
+    # (authorized_keys, see ps5-ssh-keys).
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/'               /etc/ssh/sshd_config
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/^#*KbdInteractiveAuthentication.*/KbdInteractiveAuthentication yes/' /etc/ssh/sshd_config
+    systemctl enable ssh
+
+    # Netplan hands every interface to NetworkManager.
+    mkdir -p /etc/netplan
+    printf 'network:\n  version: 2\n  renderer: NetworkManager\n' > /etc/netplan/01-network-manager-all.yaml
+    chmod 600 /etc/netplan/01-network-manager-all.yaml
+    systemctl enable NetworkManager
+
+    systemctl set-default multi-user.target
+
+    ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
+    printf 'Etc/UTC\n' > /etc/timezone
+
+    # zram swap: half of RAM, zstd compressed
+    printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
+
+- trigger: post-files
+  action: |-
+    #!/bin/bash
+    set -eux
+    systemctl enable grow-rootfs.service
+    systemctl enable ps5-ssh-keys.service
+    systemctl enable systemd-resolved
+    systemctl enable bluetooth.service
+    # No SSH host keys in the image: each console generates its own.
+    rm -f /etc/ssh/ssh_host_*
+    systemctl enable ps5-ssh-hostkeys.service
+    mkdir -p /boot/efi
+    rm -f /etc/kernel/postinst.d/kdump-tools
+    dpkg -i /opt/debs/*.deb
+    rm -rf /opt/debs
+    apt-mark hold linux-ps5 || true
+    KVER=$(ls -1t /lib/modules | head -1)
+    update-initramfs -c -k "$KVER"
+    /etc/kernel/postinst.d/zz-update-boot "$KVER"
+
+mappings:
+  architecture_map: debian

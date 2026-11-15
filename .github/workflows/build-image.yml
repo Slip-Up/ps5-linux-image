@@ -8,7 +8,7 @@ on:
         description: 'Distribution'
         default: 'ubuntu2604'
         type: choice
-        options: [all, ubuntu2604, arch, cachyos, fedora, proxmox, debian, debian13, bazzite, bazzite-deck, steamos]
+        options: [all, ubuntu2604, arch, cachyos, fedora, proxmox, debian, debian13, bazzite, bazzite-deck, steamos, ubuntu-server, kubuntu2604, fedora-kde, debian-server, nobara, endeavouros, linuxmint, popos]
   workflow_call:
     inputs:
       distro:
@@ -34,7 +34,7 @@ jobs:
         run: |
           INPUT="${{ inputs.distro || 'ubuntu2604' }}"
           if [ "$INPUT" = "all" ]; then
-            echo 'distros=["ubuntu2604","arch","cachyos","fedora","proxmox","debian","debian13","bazzite","bazzite-deck","steamos"]' >> "$GITHUB_OUTPUT"
+            echo 'distros=["ubuntu2604","arch","cachyos","fedora","proxmox","debian","debian13","bazzite","bazzite-deck","steamos","ubuntu-server","kubuntu2604","fedora-kde","debian-server","nobara","endeavouros","linuxmint","popos"]' >> "$GITHUB_OUTPUT"
           else
             echo "distros=[\"$INPUT\"]" >> "$GITHUB_OUTPUT"
           fi
@@ -222,6 +222,14 @@ jobs:
               { key: 'bazzite',      label: 'Bazzite (KDE gaming)', file: 'ps5-bazzite.img.xz' },
               { key: 'bazzite-deck', label: 'Bazzite Deck UI',      file: 'ps5-bazzite-deck.img.xz' },
               { key: 'steamos',      label: 'SteamOS 3 (Holo)',     file: 'ps5-steamos.img.xz' },
+              { key: 'ubuntu-server', label: 'Ubuntu 26.04 Server (headless)', file: 'ps5-ubuntu-server.img.xz' },
+              { key: 'kubuntu2604',  label: 'Kubuntu 26.04',        file: 'ps5-kubuntu2604.img.xz' },
+              { key: 'fedora-kde',   label: 'Fedora 44 KDE',        file: 'ps5-fedora-kde.img.xz' },
+              { key: 'debian-server', label: 'Debian 12 Server (headless)', file: 'ps5-debian-server.img.xz' },
+              { key: 'nobara',       label: 'Nobara 44 (KDE)',      file: 'ps5-nobara.img.xz' },
+              { key: 'endeavouros',  label: 'EndeavourOS (KDE)',    file: 'ps5-endeavouros.img.xz' },
+              { key: 'linuxmint',    label: 'Linux Mint 22.3 (Cinnamon)', file: 'ps5-linuxmint.img.xz' },
+              { key: 'popos',        label: 'Pop!_OS 26.04 (COSMIC)', file: 'ps5-popos.img.xz' },
             ];
 
             // Fetch existing release body to preserve distros not built this run

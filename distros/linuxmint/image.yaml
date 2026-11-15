@@ -1,0 +1,197 @@
+image:
+  name: ps5-linuxmint
+  distribution: ubuntu
+  release: noble
+  description: Linux Mint 22.3 (Cinnamon) for PS5
+  architecture: x86_64
+
+source:
+  downloader: debootstrap
+  url: http://archive.ubuntu.com/ubuntu
+  variant: minbase
+  keyserver: keyserver.ubuntu.com
+  keys:
+  - 0x790BC7277767219C42C86F933B4FE6ACC0B21F32
+  - 0xf6ecb3762474eda9d21b7022871920d1991bc93c
+
+packages:
+  manager: apt
+  update: true
+  cleanup: true
+
+  repositories:
+  - name: sources.list
+    url: |-
+      deb http://archive.ubuntu.com/ubuntu {{ image.release }} main restricted universe multiverse
+      deb http://archive.ubuntu.com/ubuntu {{ image.release }}-updates main restricted universe multiverse
+      deb http://archive.ubuntu.com/ubuntu {{ image.release }}-backports main restricted universe multiverse
+      deb http://security.ubuntu.com/ubuntu {{ image.release }}-security main restricted universe multiverse
+    architectures:
+    - amd64
+
+  # Mint's desktop is installed in post-packages, once the Mint repository
+  # is set up (post-unpack) and pinned above Ubuntu.
+  sets:
+  - packages:
+    - openssh-server
+    - network-manager
+    - systemd-resolved
+    - bluetooth
+    - bluez
+    - linux-firmware
+    - wireless-regdb
+    - initramfs-tools
+    - kmod
+    - sudo
+    - nano
+    - cloud-guest-utils
+    - kexec-tools
+    - systemd-zram-generator
+    - git
+    action: install
+
+files:
+- path: /etc/hostname
+  generator: hostname
+
+- path: /etc/hosts
+  generator: hosts
+
+- path: /etc/machine-id
+  generator: dump
+
+- path: /etc/NetworkManager/conf.d/dns.conf
+  generator: copy
+  source: /tmp/build-staging/nm-dns.conf
+
+- path: /etc/kernel/postinst.d/zz-update-boot
+  generator: copy
+  source: /tmp/build-staging/zz-update-boot
+  mode: "0755"
+
+- path: /etc/fstab
+  generator: copy
+  source: /tmp/build-staging/fstab
+
+- path: /usr/local/sbin/grow-rootfs
+  generator: copy
+  source: /tmp/build-staging/grow-rootfs
+  mode: "0755"
+
+- path: /etc/systemd/system/grow-rootfs.service
+  generator: copy
+  source: /tmp/build-staging/grow-rootfs.service
+
+- path: /etc/systemd/system/ps5-ssh-hostkeys.service
+  generator: copy
+  source: /tmp/build-staging/ps5-ssh-hostkeys.service
+
+- path: /opt/debs/
+  generator: copy
+  source: /tmp/build-staging/debs
+
+actions:
+- trigger: post-unpack
+  action: |-
+    #!/bin/bash
+    set -eux
+    rm -f /var/lib/apt/lists/*InRelease /var/lib/apt/lists/*Release /var/lib/apt/lists/*Packages* || true
+    echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80retry
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnupg curl ca-certificates
+
+    # Linux Mint repository. The key comes from the repo's own
+    # linuxmint-keyring package and must match Mint's signing key.
+    MINT_FPR=302F0738F465C1535761F965A6616109451BBBF2
+    MINT=http://packages.linuxmint.com
+    tmp=$(mktemp -d)
+    curl -fsSL "$MINT/dists/zena/main/binary-amd64/Packages.gz" | gunzip > "$tmp/Packages"
+    deb=$(awk '$0=="Package: linuxmint-keyring"{f=1} f&&/^Filename:/{print $2; exit}' "$tmp/Packages")
+    curl -fsSL -o "$tmp/k.deb" "$MINT/$deb"
+    dpkg-deb -x "$tmp/k.deb" "$tmp/k"
+    key="$tmp/k/usr/share/keyrings/linuxmint-keyring.gpg"
+    got=$(gpg --show-keys --with-colons "$key" | awk -F: '$1=="fpr"{print $10; exit}')
+    [ "$got" = "$MINT_FPR" ] || { echo "Mint key fingerprint mismatch: $got"; exit 1; }
+    # Mint ships the key ASCII-armored under a .gpg name; apt needs binary.
+    install -d /etc/apt/keyrings
+    if head -c 5 "$key" | grep -q -- '-----'; then
+      gpg --batch --yes --dearmor -o /etc/apt/keyrings/linuxmint-keyring.gpg < "$key"
+    else
+      install -m 0644 "$key" /etc/apt/keyrings/linuxmint-keyring.gpg
+    fi
+    chmod 0644 /etc/apt/keyrings/linuxmint-keyring.gpg
+    rm -rf "$tmp"
+    echo "deb [signed-by=/etc/apt/keyrings/linuxmint-keyring.gpg] $MINT zena main upstream import backport" \
+      > /etc/apt/sources.list.d/official-package-repositories.list
+    # Mint's own builds win over Ubuntu's (Mint uses the same 700 pin).
+    printf 'Package: *\nPin: origin packages.linuxmint.com\nPin-Priority: 700\n' \
+      > /etc/apt/preferences.d/official-package-repositories.pref
+    apt-get update
+
+- trigger: post-update
+  action: |-
+    #!/bin/bash
+    set -eux
+    passwd -l root
+
+- trigger: post-packages
+  action: |-
+    #!/bin/bash
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Never pull another kernel; linux-ps5 is installed from /opt/debs.
+    printf 'Package: linux-image-* linux-generic* linux-modules-* linux-hwe-* linux-oem-*\nPin: release a=*\nPin-Priority: -1\n' \
+      > /etc/apt/preferences.d/ps5-kernel.pref
+
+    apt-get install -y mint-meta-cinnamon lightdm slick-greeter
+
+    # Default user (ps5/ps5) with LightDM autologin into Cinnamon
+    useradd -m -G sudo,video,input,render -s /bin/bash ps5
+    echo "ps5:ps5" | chpasswd
+    printf 'ps5\n' > /etc/hostname
+    if grep -q '^127\.0\.1\.1' /etc/hosts; then
+      sed -i 's/^127\.0\.1\.1.*/127.0.1.1 ps5/' /etc/hosts
+    else
+      printf '127.0.1.1 ps5\n' >> /etc/hosts
+    fi
+    mkdir -p /etc/lightdm/lightdm.conf.d
+    cat > /etc/lightdm/lightdm.conf.d/50-ps5-autologin.conf <<'EOF'
+    [Seat:*]
+    autologin-user=ps5
+    autologin-user-timeout=0
+    user-session=cinnamon
+    EOF
+    systemctl enable lightdm
+    systemctl set-default graphical.target
+
+    # SSH off by default (public default credentials)
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/'               /etc/ssh/sshd_config
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    systemctl disable ssh.service || true
+    systemctl disable ssh.socket || true
+
+    # zram swap: half of RAM, zstd compressed
+    printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
+
+- trigger: post-files
+  action: |-
+    #!/bin/bash
+    set -eux
+    systemctl enable grow-rootfs.service
+    systemctl enable systemd-resolved
+    systemctl enable bluetooth.service
+    systemctl enable NetworkManager
+    # No SSH host keys in the image: each console generates its own.
+    rm -f /etc/ssh/ssh_host_*
+    systemctl enable ps5-ssh-hostkeys.service
+    mkdir -p /boot/efi
+    rm -f /etc/kernel/postinst.d/kdump-tools
+    dpkg -i /opt/debs/*.deb
+    rm -rf /opt/debs
+    KVER=$(ls -1t /lib/modules | head -1)
+    update-initramfs -c -k "$KVER"
+    /etc/kernel/postinst.d/zz-update-boot "$KVER"
+
+mappings:
+  architecture_map: debian

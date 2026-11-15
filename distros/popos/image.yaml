@@ -1,0 +1,239 @@
+image:
+  name: ps5-popos
+  distribution: ubuntu
+  release: resolute
+  description: Pop!_OS 26.04 (COSMIC desktop) for PS5
+  architecture: x86_64
+
+source:
+  downloader: debootstrap
+  url: http://archive.ubuntu.com/ubuntu
+  variant: minbase
+  keyserver: keyserver.ubuntu.com
+  keys:
+  - 0x790BC7277767219C42C86F933B4FE6ACC0B21F32
+  - 0xf6ecb3762474eda9d21b7022871920d1991bc93c
+
+packages:
+  manager: apt
+  update: true
+  cleanup: true
+
+  repositories:
+  - name: sources.list
+    url: |-
+      deb http://archive.ubuntu.com/ubuntu {{ image.release }} main restricted universe multiverse
+      deb http://archive.ubuntu.com/ubuntu {{ image.release }}-updates main restricted universe multiverse
+      deb http://security.ubuntu.com/ubuntu {{ image.release }}-security main restricted universe multiverse
+    architectures:
+    - amd64
+
+  # The Pop!_OS desktop itself is installed in post-packages, after the
+  # kernel stub (pop-server requires linux-system76, which cannot boot a PS5).
+  sets:
+  - packages:
+    - equivs
+    - openssh-server
+    - network-manager
+    - bluetooth
+    - bluez
+    - linux-firmware
+    - wireless-regdb
+    - initramfs-tools
+    - kmod
+    - sudo
+    - nano
+    - cloud-guest-utils
+    - kexec-tools
+    - systemd-zram-generator
+    - git
+    action: install
+
+files:
+- path: /etc/hostname
+  generator: hostname
+
+- path: /etc/hosts
+  generator: hosts
+
+- path: /etc/machine-id
+  generator: dump
+
+- path: /etc/NetworkManager/conf.d/dns.conf
+  generator: copy
+  source: /tmp/build-staging/nm-dns.conf
+
+- path: /etc/kernel/postinst.d/zz-update-boot
+  generator: copy
+  source: /tmp/build-staging/zz-update-boot
+  mode: "0755"
+
+- path: /etc/fstab
+  generator: copy
+  source: /tmp/build-staging/fstab
+
+- path: /usr/local/sbin/grow-rootfs
+  generator: copy
+  source: /tmp/build-staging/grow-rootfs
+  mode: "0755"
+
+- path: /etc/systemd/system/grow-rootfs.service
+  generator: copy
+  source: /tmp/build-staging/grow-rootfs.service
+
+- path: /etc/systemd/system/ps5-ssh-hostkeys.service
+  generator: copy
+  source: /tmp/build-staging/ps5-ssh-hostkeys.service
+
+- path: /opt/debs/
+  generator: copy
+  source: /tmp/build-staging/debs
+
+actions:
+- trigger: post-unpack
+  action: |-
+    #!/bin/bash
+    set -eux
+    rm -f /var/lib/apt/lists/*InRelease /var/lib/apt/lists/*Release /var/lib/apt/lists/*Packages* || true
+    echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80retry
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnupg curl ca-certificates
+
+    # Pop!_OS repository. The key comes from the repo's own pop-keyring
+    # package and must match System76's archive key fingerprint.
+    POP_FPR=63C46DF0140D738961429F4E204DD8AEC33A7AFF
+    POP=http://apt.pop-os.org/release
+    tmp=$(mktemp -d)
+    curl -fsSL "$POP/dists/resolute/main/binary-amd64/Packages.gz" | gunzip > "$tmp/Packages"
+    deb=$(awk '$0=="Package: pop-keyring"{f=1} f&&/^Filename:/{print $2; exit}' "$tmp/Packages")
+    curl -fsSL -o "$tmp/k.deb" "$POP/$deb"
+    dpkg-deb -x "$tmp/k.deb" "$tmp/k"
+    key="$tmp/k/usr/share/keyrings/pop-archive-keyring.gpg"
+    got=$(gpg --show-keys --with-colons "$key" | awk -F: '$1=="fpr"{print $10; exit}')
+    [ "$got" = "$POP_FPR" ] || { echo "Pop key fingerprint mismatch: $got"; exit 1; }
+    # Same path pop-keyring installs and pop-default-settings expects.
+    install -d /etc/apt/trusted.gpg.d
+    if head -c 5 "$key" | grep -q -- '-----'; then
+      gpg --batch --yes --dearmor -o /etc/apt/trusted.gpg.d/pop-keyring-2017-archive.gpg < "$key"
+    else
+      install -m 0644 "$key" /etc/apt/trusted.gpg.d/pop-keyring-2017-archive.gpg
+    fi
+    chmod 0644 /etc/apt/trusted.gpg.d/pop-keyring-2017-archive.gpg
+    rm -rf "$tmp"
+
+    # Sources in the DEB822 layout Pop!_OS uses: pop-default-settings edits
+    # pop-os-release.sources and keeps an existing system.sources.
+    cat > /etc/apt/sources.list.d/pop-os-release.sources <<EOF
+    X-Repolib-Name: Pop_OS Release Sources
+    Enabled: yes
+    Types: deb
+    URIs: $POP
+    Suites: resolute
+    Components: main
+    Signed-By: /etc/apt/trusted.gpg.d/pop-keyring-2017-archive.gpg
+    EOF
+    cat > /etc/apt/sources.list.d/system.sources <<'EOF'
+    X-Repolib-Name: Pop_OS System Sources
+    Enabled: yes
+    Types: deb
+    URIs: http://archive.ubuntu.com/ubuntu
+    Suites: resolute resolute-security resolute-updates resolute-backports
+    Components: main restricted universe multiverse
+    Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+    EOF
+    : > /etc/apt/sources.list
+    # Prefer Pop!_OS builds over Ubuntu's, as Pop!_OS itself does.
+    printf 'Package: *\nPin: origin apt.pop-os.org\nPin-Priority: 700\n' \
+      > /etc/apt/preferences.d/pop-os-release.pref
+    apt-get update
+
+- trigger: post-update
+  action: |-
+    #!/bin/bash
+    set -eux
+    passwd -l root
+
+- trigger: post-packages
+  action: |-
+    #!/bin/bash
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Stub that satisfies pop-server's "linux-system76" dependency, so the
+    # System76 kernel and kernelstub (EFI boot entries) are never installed.
+    cat > /tmp/ps5-kernel-stub.ctl <<'EOF'
+    Section: misc
+    Priority: optional
+    Standards-Version: 3.9.2
+    Package: ps5-popos-kernel-stub
+    Version: 1.0
+    Maintainer: PS5 Linux <ps5@localhost>
+    Provides: linux-system76
+    Description: PS5 kernel stub for Pop!_OS
+     Satisfies linux-system76 so the PS5-patched kernel (linux-ps5) is the
+     only kernel. The System76 kernel cannot boot the PS5.
+    EOF
+    ( cd /tmp && equivs-build ps5-kernel-stub.ctl )
+    apt-get install -y /tmp/ps5-popos-kernel-stub_1.0_all.deb
+    rm -f /tmp/ps5-popos-kernel-stub_1.0_all.deb /tmp/ps5-kernel-stub.ctl
+
+    # Never pull another kernel image or the EFI boot manager.
+    printf 'Package: linux-image-* linux-generic* linux-system76 linux-modules-* kernelstub\nPin: release a=*\nPin-Priority: -1\n' \
+      > /etc/apt/preferences.d/ps5-kernel.pref
+
+    apt-get install -y pop-desktop pop-default-settings cosmic-session cosmic-greeter greetd
+    apt-get purge -y kernelstub || true
+
+    # Default user (ps5/ps5), COSMIC autologin through greetd.
+    useradd -m -G sudo,video,input,render -s /bin/bash ps5
+    echo "ps5:ps5" | chpasswd
+    printf 'ps5\n' > /etc/hostname
+    if grep -q '^127\.0\.1\.1' /etc/hosts; then
+      sed -i 's/^127\.0\.1\.1.*/127.0.1.1 ps5/' /etc/hosts
+    else
+      printf '127.0.1.1 ps5\n' >> /etc/hosts
+    fi
+    SESSION_CMD=$(sed -n 's/^Exec=//p' /usr/share/wayland-sessions/cosmic.desktop | head -1)
+    [ -n "$SESSION_CMD" ] || SESSION_CMD=start-cosmic
+    grep -q '^\[initial_session\]' /etc/greetd/cosmic-greeter.toml || \
+      printf '\n[initial_session]\ncommand = "%s"\nuser = "ps5"\n' "$SESSION_CMD" >> /etc/greetd/cosmic-greeter.toml
+    echo /usr/sbin/greetd > /etc/X11/default-display-manager || true
+    ln -sf /usr/lib/systemd/system/cosmic-greeter.service /etc/systemd/system/display-manager.service
+    systemctl set-default graphical.target
+
+    # SSH off by default (public default credentials)
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/'               /etc/ssh/sshd_config
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    systemctl disable ssh.service || true
+    systemctl disable ssh.socket || true
+
+    # zram swap (Pop!_OS also ships pop-default-settings-zram; keep ours as the
+    # same ram / 2 zstd setting the other images use)
+    printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
+
+- trigger: post-files
+  action: |-
+    #!/bin/bash
+    set -eux
+    systemctl enable grow-rootfs.service
+    systemctl enable systemd-resolved
+    systemctl enable bluetooth.service
+    systemctl enable NetworkManager
+    # No SSH host keys in the image: each console generates its own.
+    rm -f /etc/ssh/ssh_host_*
+    systemctl enable ps5-ssh-hostkeys.service
+    mkdir -p /boot/efi
+    rm -f /etc/kernel/postinst.d/kdump-tools
+    dpkg -i /opt/debs/*.deb
+    rm -rf /opt/debs
+    KVER=$(ls -1t /lib/modules | head -1)
+    # Pop!_OS uses dracut; Ubuntu's initramfs-tools may be replaced by it.
+    if command -v update-initramfs >/dev/null 2>&1; then
+      update-initramfs -c -k "$KVER"
+    else
+      dracut --force --kver "$KVER" "/boot/initrd.img-$KVER"
+    fi
+    /etc/kernel/postinst.d/zz-update-boot "$KVER"
+
+mappings:
+  architecture_map: debian
