@@ -196,6 +196,11 @@ files:
   generator: copy
   source: /tmp/build-staging/files/ps5-sleep.conf
 
+- path: /usr/local/lib/ps5-display-reset
+  generator: copy
+  source: /tmp/build-staging/files/ps5-display-reset
+  mode: "0755"
+
 - path: /usr/local/lib/ps5-os-disk
   generator: copy
   source: /tmp/build-staging/files/ps5-os-disk

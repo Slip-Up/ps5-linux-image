@@ -9,8 +9,8 @@ Window {
     id: root
     visible: true
     visibility: Window.FullScreen
-    width: 1920
-    height: 1080
+    width: Screen.width > 0 ? Screen.width : 1920
+    height: Screen.height > 0 ? Screen.height : 1080
     title: "PS5 Linux"          // ps5-splash looks for this title
     color: "#0a0d12"
 
