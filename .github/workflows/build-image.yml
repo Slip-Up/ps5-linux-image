@@ -8,41 +8,151 @@ on:
         description: 'Distribution'
         default: 'ubuntu2604'
         type: choice
+        # Keep in step with .github/images.json.
         options: [all, ubuntu2604, arch, cachyos, fedora, proxmox, debian, debian13, bazzite, bazzite-deck, steamos, ubuntu-server, kubuntu2604, fedora-kde, debian-server, nobara, endeavouros, linuxmint, popos]
   workflow_call:
     inputs:
       distro:
         type: string
         default: 'ubuntu2604'
+    # Without the R2 secrets (a fork) the images are built but not published.
     secrets:
       R2_ACCESS_KEY_ID:
-        required: true
+        required: false
       R2_SECRET_ACCESS_KEY:
-        required: true
+        required: false
       R2_ENDPOINT:
-        required: true
+        required: false
       R2_BUCKET:
-        required: true
+        required: false
+
+# One build of all images at a time: a newer one replaces the one in
+# progress, whether it comes from a push or from the patches watcher. Builds
+# of one distro and builds for a pull request are left alone.
+concurrency:
+  group: >-
+    ps5-images-${{ github.event_name == 'pull_request_target'
+                   && format('pr-{0}', github.event.pull_request.number)
+                   || (inputs.distro == 'all' && 'all' || github.run_id) }}
+  cancel-in-progress: true
+
+# The jobs run on GitHub-hosted runners, one per image and all at once.
+# Repository variables (all optional):
+#   IMAGE_RUNNER, KERNEL_RUNNER  JSON label lists for the build and kernel
+#       jobs, default ["ubuntu-24.04"]. ["self-hosted"] goes back to the
+#       project's own runners (one job at a time per runner).
+#   XZ_LEVEL  xz preset for the images, default 4. On a 12 GB image -2 takes
+#       40 % less time for a 4 % larger file, -1 56 % less for 6 %.
 
 jobs:
   matrix:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       distros: ${{ steps.set.outputs.distros }}
+      publish: ${{ steps.set.outputs.publish }}
     steps:
+      - name: Checkout image list
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/images.json
+          sparse-checkout-cone-mode: false
+
       - id: set
+        env:
+          INPUT: ${{ inputs.distro || 'ubuntu2604' }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          EVENT: ${{ github.event_name }}
         run: |
-          INPUT="${{ inputs.distro || 'ubuntu2604' }}"
+          set -euo pipefail
           if [ "$INPUT" = "all" ]; then
-            echo 'distros=["ubuntu2604","arch","cachyos","fedora","proxmox","debian","debian13","bazzite","bazzite-deck","steamos","ubuntu-server","kubuntu2604","fedora-kde","debian-server","nobara","endeavouros","linuxmint","popos"]' >> "$GITHUB_OUTPUT"
+            distros=$(jq -c '[.[].key]' .github/images.json)
           else
-            echo "distros=[\"$INPUT\"]" >> "$GITHUB_OUTPUT"
+            distros=$(jq -c --arg d "$INPUT" '[.[].key | select(. == $d)]' .github/images.json)
           fi
+          if [ "$distros" = "[]" ]; then
+            echo "::error::'$INPUT' is not in .github/images.json"
+            exit 1
+          fi
+          echo "distros=$distros" >> "$GITHUB_OUTPUT"
+
+          # Images are published from pushes and manual runs of a repository
+          # that has the R2 secrets. Forks and pull requests only build.
+          publish=true
+          [ -n "$R2_BUCKET" ] || publish=false
+          case "$EVENT" in pull_request*) publish=false ;; esac
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+  # The kernel is the same for every image: build and package it once.
+  kernel:
+    needs: matrix
+    runs-on: ${{ fromJSON(vars.KERNEL_RUNNER || '["ubuntu-24.04"]') }}
+    timeout-minutes: 180
+    steps:
+      - name: Clean kernel workspace
+        run: |
+          set -euo pipefail
+          if [ -z "${GITHUB_WORKSPACE:-}" ] || [ "$GITHUB_WORKSPACE" = "/" ]; then
+            echo "Invalid GITHUB_WORKSPACE" >&2
+            exit 1
+          fi
+          sudo rm -rf "$GITHUB_WORKSPACE/kernel"
+
+      - name: Checkout image builder
+        uses: actions/checkout@v6
+        with:
+          path: kernel
+
+      # A hosted runner starts empty: keep the compiler cache between runs.
+      - name: Restore compiler cache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v4
+        with:
+          path: kernel/ccache
+          key: kernel-ccache-${{ github.run_id }}
+          restore-keys: kernel-ccache-
+
+      - name: Build kernel packages
+        env:
+          DISTROS: ${{ needs.matrix.outputs.distros }}
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.environment }}" = "self-hosted" ]; then
+            export CCACHE_DIR=/home/opc/ccache
+          else
+            # build_image.sh uses kernel/ccache; keep the saved cache small.
+            mkdir -p kernel/ccache
+            echo "max_size = 2G" > kernel/ccache/ccache.conf
+          fi
+          # Only the package formats the images of this run install.
+          formats=$(for d in $(tr -d '[]"' <<< "$DISTROS" | tr ',' ' '); do
+                      bash kernel/build_image.sh --distro "$d" --print-format
+                    done | sort -u | paste -sd, -)
+          echo "Kernel package formats: $formats"
+          FORMAT="$formats" bash kernel/build_image.sh --kernel-only
+
+      - name: Upload kernel packages
+        uses: actions/upload-artifact@v6
+        with:
+          name: kernel-packages
+          path: |
+            kernel/linux-bin/*.deb
+            kernel/linux-bin/*.rpm
+            kernel/linux-bin/*.pkg.tar.zst
+            kernel/linux-bin/VERSION
+            kernel/linux-bin/PATCHES_SHA
+          if-no-files-found: error
+          retention-days: 1
+
+      # Not on a hosted runner: the compiler cache is saved after this step.
+      - name: Remove kernel workspace
+        if: always() && runner.environment == 'self-hosted'
+        run: sudo rm -rf "${GITHUB_WORKSPACE:?}/kernel"
 
   build:
-    needs: matrix
-    runs-on: self-hosted
-    timeout-minutes: 720
+    needs: [matrix, kernel]
+    runs-on: ${{ fromJSON(vars.IMAGE_RUNNER || '["ubuntu-24.04"]') }}
+    # A job on a hosted runner is stopped after 6 hours.
+    timeout-minutes: 350
     # Don't build the same distro in two runs at once.
     concurrency:
       group: ps5-image-${{ matrix.distro }}
@@ -52,14 +162,18 @@ jobs:
 
     strategy:
       fail-fast: false
-      max-parallel: 5
       matrix:
         distro: ${{ fromJson(needs.matrix.outputs.distros) }}
 
-    env:
-      CCACHE_DIR: /home/opc/ccache
-
     steps:
+      - name: Free disk space
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache /usr/local/share/boost
+          docker system prune -af > /dev/null || true
+          df -h /
+
       - name: Clean image workspace
         run: |
           set -euo pipefail
@@ -95,35 +209,53 @@ jobs:
         with:
           path: image
 
+      - name: Download kernel packages
+        uses: actions/download-artifact@v6
+        with:
+          name: kernel-packages
+          path: image/linux-bin
+
       - name: Build ${{ matrix.distro }} image
         run: |
+          if [ "${{ runner.environment }}" = "self-hosted" ]; then
+            export CCACHE_DIR=/home/opc/ccache
+          fi
+          ls -l image/linux-bin
           bash image/build_image.sh --distro "${{ matrix.distro }}"
 
       - name: Set version info
         id: version
         run: |
-          psha=$(git -C image/work/ps5-linux-patches rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          # The kernel job records both; the patches are not fetched here.
+          psha=$(cat image/linux-bin/PATCHES_SHA 2>/dev/null \
+                 || git -C image/work/ps5-linux-patches rev-parse --short HEAD 2>/dev/null \
+                 || echo "unknown")
           kver=$(cat image/linux-bin/VERSION 2>/dev/null || echo "unknown")
           ts=$(date -u +%Y%m%d-%H%M%S)
-          echo "psha=$psha" >> "$GITHUB_OUTPUT"
-          echo "kver=$kver" >> "$GITHUB_OUTPUT"
-          echo "ts=$ts" >> "$GITHUB_OUTPUT"
+          {
+            echo "psha=$psha"
+            echo "kver=$kver"
+            echo "ts=$ts"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Report
         run: |
           ls -lh image/output/*.img
-          sha256sum image/output/*.img
 
       - name: Compress image
+        env:
+          XZ_LEVEL: ${{ vars.XZ_LEVEL || '4' }}
         run: |
-          xz -T0 -4 -c image/output/ps5-${{ matrix.distro }}.img \
+          case "$XZ_LEVEL" in [0-9]) ;; *) echo "XZ_LEVEL must be 0-9" >&2; exit 1 ;; esac
+          xz -T0 "-$XZ_LEVEL" -c image/output/ps5-${{ matrix.distro }}.img \
             > image/output/ps5-${{ matrix.distro }}.img.xz
           # Checksum file published next to the image ("sha256sum -c" format).
           ( cd image/output && sha256sum ps5-${{ matrix.distro }}.img.xz \
               > ps5-${{ matrix.distro }}.img.xz.sha256 )
+          ls -lh image/output/ps5-${{ matrix.distro }}.img.xz
 
       - name: Upload to R2
-        if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+        if: needs.matrix.outputs.publish == 'true'
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -132,6 +264,10 @@ jobs:
           RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           RCLONE_CONFIG_R2_NO_CHECK_BUCKET: true
         run: |
+          if ! command -v rclone > /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends rclone
+          fi
           # The image replaces the previous one right away, so its checksum
           # file goes up with it: the release body is only rewritten later,
           # in the release job.
@@ -142,6 +278,9 @@ jobs:
 
       - name: Save build metadata
         run: |
+          # meta/ is outside image/ and stays on the runner between jobs:
+          # without this the artifact carries the checksums of earlier builds.
+          rm -rf meta
           mkdir -p meta
           cp image/output/ps5-${{ matrix.distro }}.img.xz.sha256 meta/${{ matrix.distro }}.sha256
           echo "${{ steps.version.outputs.kver }}" > meta/kver
@@ -157,7 +296,7 @@ jobs:
 
   release:
     needs: [matrix, build]
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     concurrency:
       group: ps5-image-release
       cancel-in-progress: false
@@ -167,11 +306,16 @@ jobs:
       ${{ !cancelled()
           && needs.matrix.result == 'success'
           && needs.build.result != 'skipped'
-          && github.event_name != 'pull_request'
-          && github.event_name != 'pull_request_target' }}
+          && needs.matrix.outputs.publish == 'true' }}
     permissions:
       contents: write
     steps:
+      - name: Checkout image list
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/images.json
+          sparse-checkout-cone-mode: false
+
       - name: Download build metadata
         uses: actions/download-artifact@v6
         # No artifacts when every build failed; the next step handles that.
@@ -202,6 +346,9 @@ jobs:
             const psha = fs.readFileSync('meta/psha', 'utf8').trim();
             const ts   = fs.readFileSync('meta/ts',   'utf8').trim();
 
+            // Distros this run tried to build
+            const attempted = JSON.parse(process.env.ATTEMPTED || '[]');
+
             // Collect new checksums from this run
             const newSums = {};
             for (const f of fs.readdirSync('meta').filter(f => f.endsWith('.sha256'))) {
@@ -211,26 +358,8 @@ jobs:
 
             // All known distros and their display names (order = table order)
             const R2 = 'https://pub-561df4012f1a46fbbdf618d5cc5941f6.r2.dev';
-            const ALL_DISTROS = [
-              { key: 'ubuntu2604',   label: 'Ubuntu 26.04',         file: 'ps5-ubuntu2604.img.xz' },
-              { key: 'arch',         label: 'Arch',                 file: 'ps5-arch.img.xz' },
-              { key: 'cachyos',      label: 'CachyOS',              file: 'ps5-cachyos.img.xz' },
-              { key: 'fedora',       label: 'Fedora 44',            file: 'ps5-fedora.img.xz' },
-              { key: 'proxmox',      label: 'Proxmox VE 8',         file: 'ps5-proxmox.img.xz' },
-              { key: 'debian',       label: 'Debian 12',            file: 'ps5-debian.img.xz' },
-              { key: 'debian13',     label: 'Debian 13',            file: 'ps5-debian13.img.xz' },
-              { key: 'bazzite',      label: 'Bazzite (KDE gaming)', file: 'ps5-bazzite.img.xz' },
-              { key: 'bazzite-deck', label: 'Bazzite Deck UI',      file: 'ps5-bazzite-deck.img.xz' },
-              { key: 'steamos',      label: 'SteamOS 3 (Holo)',     file: 'ps5-steamos.img.xz' },
-              { key: 'ubuntu-server', label: 'Ubuntu 26.04 Server (headless)', file: 'ps5-ubuntu-server.img.xz' },
-              { key: 'kubuntu2604',  label: 'Kubuntu 26.04',        file: 'ps5-kubuntu2604.img.xz' },
-              { key: 'fedora-kde',   label: 'Fedora 44 KDE',        file: 'ps5-fedora-kde.img.xz' },
-              { key: 'debian-server', label: 'Debian 12 Server (headless)', file: 'ps5-debian-server.img.xz' },
-              { key: 'nobara',       label: 'Nobara 44 (KDE)',      file: 'ps5-nobara.img.xz' },
-              { key: 'endeavouros',  label: 'EndeavourOS (KDE)',    file: 'ps5-endeavouros.img.xz' },
-              { key: 'linuxmint',    label: 'Linux Mint 22.3 (Cinnamon)', file: 'ps5-linuxmint.img.xz' },
-              { key: 'popos',        label: 'Pop!_OS 26.04 (COSMIC)', file: 'ps5-popos.img.xz' },
-            ];
+            const ALL_DISTROS = JSON.parse(fs.readFileSync('.github/images.json', 'utf8'))
+              .map(d => ({ ...d, file: `ps5-${d.key}.img.xz` }));
 
             // Fetch existing release body to preserve distros not built this run
             const existingSums = {};
@@ -256,6 +385,27 @@ jobs:
               core.info('No existing release found, starting fresh');
             }
 
+            // An image not built in this run can still be newer than the
+            // release body: a cancelled run uploads the images it finished
+            // and never gets here. The .sha256 file next to each image on R2
+            // is uploaded with it, so it is the one to trust.
+            for (const d of ALL_DISTROS) {
+              if (d.key in newSums) continue;
+              try {
+                const res = await fetch(`${R2}/${d.file}.sha256`, {
+                  signal: AbortSignal.timeout(20000),
+                });
+                if (!res.ok) continue;
+                const line = (await res.text()).trim();
+                const [sum, name, ...rest] = line.split(/\s+/);
+                if (!/^[0-9a-f]{64}$/.test(sum) || name !== d.file || rest.length) continue;
+                if (existingSums[d.key] !== line) core.info(`${d.key}: checksum taken from R2`);
+                existingSums[d.key] = line;
+              } catch (e) {
+                core.info(`${d.key}: no checksum file read from R2 (${e.message})`);
+              }
+            }
+
             // Merge: new checksums override existing ones
             const mergedSums = { ...existingSums };
             for (const [k, v] of Object.entries(newSums)) {
@@ -269,7 +419,6 @@ jobs:
               .map(d => `| ${d.label} | [\`${d.file}\`](${R2}/${d.file}) | [\`sha256\`](${R2}/${d.file}.sha256) |`);
 
             // Distros this run tried to build but did not (their previous image is kept)
-            const attempted = JSON.parse(process.env.ATTEMPTED || '[]');
             const failed = attempted.filter(d => !(d in newSums));
             const label = k => (ALL_DISTROS.find(d => d.key === k) || { label: k }).label;
 

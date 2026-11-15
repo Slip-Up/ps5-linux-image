@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # Documentation alone does not change the images.
+    paths-ignore: ['**.md']
   pull_request_target:
     types: [labeled]
     branches: [main]

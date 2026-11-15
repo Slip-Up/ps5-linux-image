@@ -9,6 +9,7 @@ KERNEL_SRC=""
 CLEAN=false
 IMG_SIZE=12000
 KERNEL_ONLY=false
+PRINT_FORMAT=false
 PATCHES_REF="kernel-7.3.3-b33e7c5"
 
 MULTI_DISTROS="ubuntu2604 arch cachyos"
@@ -23,6 +24,7 @@ usage() {
     echo "  --clean      Remove all cached build artifacts and start from scratch"
     echo "  --clean-only Remove all cached build artifacts and exit"
     echo "  --kernel-only  Build and package the kernel only, then exit"
+    echo "  --print-format Print the kernel package format of --distro (deb, arch, rpm), then exit"
     echo "  --patches-ref  Branch, tag, or commit SHA for patches (default: v1.2)"
     exit 1
 }
@@ -35,6 +37,7 @@ while [[ $# -gt 0 ]]; do
         --clean)     CLEAN=true;           shift ;;
         --clean-only) CLEAN=true; CLEAN_EXIT=true; shift ;;
         --kernel-only) KERNEL_ONLY=true;   shift ;;
+        --print-format) PRINT_FORMAT=true; shift ;;
         --patches-ref) [ -n "$2" ] && PATCHES_REF="$2"; shift 2 ;;
         -h|--help)   usage ;;
         *) echo "Unknown option: $1"; usage ;;
@@ -92,6 +95,33 @@ if [ -z "$FORMAT" ]; then
     esac
 fi
 
+if [ "$PRINT_FORMAT" = true ]; then
+    echo "$FORMAT"
+    exit 0
+fi
+
+# FORMAT is deb, arch or rpm, a comma-separated list of them (CI builds the
+# kernel once for every image), or "all" (deb + arch, for the multi image).
+want_format() {
+    case ",$FORMAT," in
+        *",$1,"*) return 0 ;;
+        ,all,)    [ "$1" != rpm ] ;;
+        *)        return 1 ;;
+    esac
+}
+if ! want_format deb && ! want_format arch && ! want_format rpm; then
+    echo "Unknown kernel package format: $FORMAT" >&2
+    exit 1
+fi
+
+have_kernel_package() {
+    case "$1" in
+        deb)  ls "$KERNEL_OUT"/*.deb         >/dev/null 2>&1 ;;
+        arch) ls "$KERNEL_OUT"/*.pkg.tar.zst >/dev/null 2>&1 ;;
+        rpm)  ls "$KERNEL_OUT"/*.rpm         >/dev/null 2>&1 ;;
+    esac
+}
+
 KERNEL_BUILDER_PLATFORM="linux/amd64"
 case "$(uname -m)" in
     aarch64|arm64) KERNEL_BUILDER_PLATFORM="linux/arm64" ;;
@@ -124,16 +154,15 @@ if [ "$CLEAN" = true ]; then
 fi
 
 # --- Auto-detect what can be skipped ---
-SKIP_KERNEL=false
+# The kernel stage is skipped when every wanted package is already there.
+SKIP_KERNEL=true
 SKIP_CHROOT=false
 
-case "$FORMAT" in
-    arch) ls "$KERNEL_OUT"/*.pkg.tar.zst 1>/dev/null 2>&1 && SKIP_KERNEL=true ;;
-    rpm)  ls "$KERNEL_OUT"/*.rpm 1>/dev/null 2>&1 && SKIP_KERNEL=true ;;
-    all)  ls "$KERNEL_OUT"/*.deb 1>/dev/null 2>&1 && \
-          ls "$KERNEL_OUT"/*.pkg.tar.zst 1>/dev/null 2>&1 && SKIP_KERNEL=true ;;
-    *)    ls "$KERNEL_OUT"/*.deb 1>/dev/null 2>&1 && SKIP_KERNEL=true ;;
-esac
+for f in deb arch rpm; do
+    if want_format "$f" && ! have_kernel_package "$f"; then
+        SKIP_KERNEL=false
+    fi
+done
 
 if [ "$DISTRO" = "all" ]; then
     SKIP_CHROOT=true
@@ -315,8 +344,11 @@ else
             ps5-kernel-builder
 
     ls "$KERNEL_OUT/staging/lib/modules/" | head -1 > "$KERNEL_OUT/VERSION"
+    # For builds that reuse these packages without fetching the patches.
+    git -C "$PATCHES_DIR" rev-parse --short HEAD > "$KERNEL_OUT/PATCHES_SHA" 2>/dev/null \
+        || rm -f "$KERNEL_OUT/PATCHES_SHA"
 
-    case "$FORMAT" in deb|all)
+    if want_format deb; then
         run_stage "Package kernel (.deb)" \
             docker run --rm --platform "$KERNEL_BUILDER_PLATFORM" --name "$DOCKER_NAME" \
                 -v "$KERNEL_SRC":/src \
@@ -324,9 +356,9 @@ else
                 -v "$CCACHE_DIR":/ccache \
                 ps5-kernel-builder \
                 /package-deb.sh
-    esac
+    fi
 
-    case "$FORMAT" in arch|all)
+    if want_format arch; then
         run_stage "Build arch packager image" \
             docker build -t ps5-kernel-packager-arch \
                 -f "$SCRIPT_DIR/docker/kernel-builder-arch/Dockerfile" "$SCRIPT_DIR"
@@ -334,9 +366,9 @@ else
             docker run --rm --name "$DOCKER_NAME" \
                 -v "$KERNEL_OUT":/out \
                 ps5-kernel-packager-arch
-    esac
+    fi
 
-    case "$FORMAT" in rpm)
+    if want_format rpm; then
         run_stage "Build rpm packager image" \
             docker build -t ps5-kernel-packager-rpm \
                 -f "$SCRIPT_DIR/docker/kernel-builder-rpm/Dockerfile" "$SCRIPT_DIR"
@@ -344,7 +376,7 @@ else
             docker run --rm --name "$DOCKER_NAME" \
                 -v "$KERNEL_OUT":/out \
                 ps5-kernel-packager-rpm
-    esac
+    fi
 fi
 
 if [ "$KERNEL_ONLY" = true ]; then
