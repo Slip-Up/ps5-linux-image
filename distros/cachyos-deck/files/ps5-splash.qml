@@ -119,8 +119,7 @@ Window {
         }
     }
 
-    // Fine grain, drawn once. It breaks up the steps an 8-bit display would
-    // otherwise show in the two lights.
+    // Grain against 8-bit banding; one tiled 512x512 tile (a full 4K fill is slow).
     Canvas {
         id: grain
         anchors.fill: parent
@@ -128,15 +127,17 @@ Window {
         renderStrategy: Canvas.Immediate
         onPaint: {
             var ctx = getContext("2d")
-            var w = Math.max(1, Math.floor(width)), h = Math.max(1, Math.floor(height))
-            var img = ctx.createImageData(w, h)
-            var d = img.data
+            var t = 512
+            var tile = ctx.createImageData(t, t)
+            var d = tile.data
             for (var i = 0; i < d.length; i += 4) {
                 var v = Math.random() < 0.5 ? 0 : 255
                 d[i] = v; d[i + 1] = v; d[i + 2] = v
                 d[i + 3] = Math.random() * 7
             }
-            ctx.putImageData(img, 0, 0)
+            for (var y = 0; y < height; y += t)
+                for (var x = 0; x < width; x += t)
+                    ctx.putImageData(tile, x, y)
         }
     }
 

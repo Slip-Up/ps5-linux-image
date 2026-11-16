@@ -1,9 +1,9 @@
 #!/bin/sh
-# Sourced very early by startplasma-wayland (before KWin). PS5 routes the internal
-# DP through an HDMI bridge that mishandles HDR / wide-gamut / 10bpc signalling:
-# assumed-HDR EDID paths and AR30/AB30 primaries can yield a valid mode but a black
-# HDMI image. Force HDR off and prefer 8bpc/24bpp framebuffers.
-#   - KWIN_FORCE_ASSUME_HDR_SUPPORT=0 (https://invent.kde.org/plasma/kwin/-/merge_requests/7337)
-#   - KWIN_DRM_PREFER_COLOR_DEPTH=24
+# HDR off on the desktop. FLAVA3 gets 10 bpc so game mode does not have to
+# raise max bpc again on return (ps5-display-reset).
 export KWIN_FORCE_ASSUME_HDR_SUPPORT=0
-export KWIN_DRM_PREFER_COLOR_DEPTH=24
+if journalctl -k -b -o cat --no-pager 2>/dev/null | grep -m1 -q 'HDMI IC Type \[FLAVA3\]'; then
+    export KWIN_DRM_PREFER_COLOR_DEPTH=30
+else
+    export KWIN_DRM_PREFER_COLOR_DEPTH=24
+fi

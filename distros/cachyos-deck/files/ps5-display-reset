@@ -1,22 +1,14 @@
 #!/bin/sh
-# ps5-display-reset: before game mode starts, give the display connectors
-# their full colour depth range back.
-#
-# The connector property "max bpc" keeps its value from one session to the
-# next. The Plasma desktop lowers it to 8. Gamescope never sets it, so after
-# "Return to Gaming Mode" the output stayed at 8 bits, and with HDR switched on
-# (which needs 10) the kernel refused every frame: a frozen picture.
-#
-# Runs as ExecStartPre of gamescope-session.service, when no compositor holds
-# the display. Writes only when a value differs, so a normal start changes
-# nothing. Any failure here is ignored.
+# Plasma leaves max bpc at 8 and Gamescope never raises it, so HDR froze after
+# returning to game mode. Raise it back, only when below 10 (each write costs
+# a modeset).
 command -v modetest >/dev/null 2>&1 || exit 0
 
 modetest -c 2>/dev/null | awk '
     /^[0-9]+\t[0-9]+\t(connected|disconnected|unknown)/ { conn = $1; next }
     /^\t[0-9]+ [^\t]*:$/ { name = $0; sub(/^\t[0-9]+ /, "", name); sub(/:$/, "", name); next }
     conn && name == "max bpc" && /^\t\tvalues: / { max = $3 }
-    conn && name == "max bpc" && /^\t\tvalue: /  { if ($2 != max) print conn ":" max; name = "" }
+    conn && name == "max bpc" && /^\t\tvalue: /  { if ($2 < 10) print conn ":" max; name = "" }
 ' | while IFS=: read -r conn max; do
     modetest -w "$conn:max bpc:$max" >/dev/null 2>&1 &&
         echo "ps5-display-reset: connector $conn max bpc set to $max"
