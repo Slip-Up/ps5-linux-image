@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=PS5 Linux
+Description=PS5 Linux boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/ps5-linux
+ScriptFile=/usr/share/plymouth/themes/ps5-linux/ps5-linux.script

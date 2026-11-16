@@ -16,6 +16,14 @@ hdr=no
 why="converter not known"
 case "$ic" in
     *'[FLAVA3]'*) hdr=yes; why="FLAVA3 converter" ;;
+    *'[VERDE]'*)
+        if [ "$(cat /sys/module/hdmi/parameters/verde_infoframes 2>/dev/null)" = Y ]; then
+            hdr=yes
+            why="VERDE converter with hdmi.verde_infoframes=1"
+        else
+            why="converter VERDE"
+        fi
+        ;;
     *'['*']'*)    why="converter ${ic##*[}"; why="${why%]*}" ;;
 esac
 if [ -e "$BOOT/no-hdr" ]; then

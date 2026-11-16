@@ -39,6 +39,9 @@ packages:
     - xorg-xwayland
     - xorg-xinit
 
+    # Boot splash (files/ps5-plymouth.*)
+    - plymouth
+
     # KDE Plasma desktop
     - plasma-meta
     - sddm
@@ -223,6 +226,30 @@ files:
   generator: copy
   source: /tmp/build-staging/files/ps5-setup.desktop
 
+- path: /usr/share/plymouth/themes/ps5-linux/ps5-linux.plymouth
+  generator: copy
+  source: /tmp/build-staging/files/ps5-plymouth.plymouth
+
+- path: /usr/share/plymouth/themes/ps5-linux/ps5-linux.script
+  generator: copy
+  source: /tmp/build-staging/files/ps5-plymouth.script
+
+- path: /usr/share/plymouth/themes/ps5-linux/ps5-plymouth-ring.png
+  generator: copy
+  source: /tmp/build-staging/files/ps5-plymouth-ring.png
+
+- path: /usr/share/plymouth/themes/ps5-linux/ps5-plymouth-arc.png
+  generator: copy
+  source: /tmp/build-staging/files/ps5-plymouth-arc.png
+
+- path: /usr/share/plymouth/themes/ps5-linux/ps5-plymouth-wordmark.png
+  generator: copy
+  source: /tmp/build-staging/files/ps5-plymouth-wordmark.png
+
+- path: /etc/plymouth/plymouthd.conf
+  generator: copy
+  source: /tmp/build-staging/files/ps5-plymouthd.conf
+
 - path: /usr/local/share/ps5-steam-config.vdf
   generator: copy
   source: /tmp/build-staging/files/steam-config.vdf
@@ -391,12 +418,18 @@ actions:
 
     [ -f /etc/vconsole.conf ] || echo "KEYMAP=us" > /etc/vconsole.conf
 
+    # Boot splash only, not at shutdown or kexec
+    for u in plymouth-reboot plymouth-poweroff plymouth-halt plymouth-kexec; do
+        ln -sf /dev/null "/etc/systemd/system/$u.service"
+    done
+
     # Busybox-based initrd: polls for the root device (works after kexec, unlike
     # the systemd initrd which waits for udev events that never re-fire).
     # `kms` loads the amdgpu module + firmware early so the display comes up
     # before the rootfs is mounted. `keyboard` allows emergency-mode input.
+    # `plymouth` adds the boot splash.
     sed -i \
-      -e 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard block filesystems fsck)/' \
+      -e 's/^HOOKS=.*/HOOKS=(base udev plymouth modconf kms keyboard block filesystems fsck)/' \
       -e 's/^MODULES=.*/MODULES=(amdgpu)/' \
       /etc/mkinitcpio.conf
 

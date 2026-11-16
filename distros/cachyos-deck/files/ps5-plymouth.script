@@ -1,0 +1,48 @@
+# Images are drawn for 2160 lines and scaled to the screen.
+
+Window.SetBackgroundTopColor(0.075, 0.102, 0.141);      # #131a24
+Window.SetBackgroundBottomColor(0.027, 0.035, 0.051);   # #07090d
+
+screen.w = Window.GetWidth();
+screen.h = Window.GetHeight();
+scale = screen.h / 2160;
+
+fun Scaled(name) {
+    image = Image(name);
+    return image.Scale(Math.Int(image.GetWidth() * scale),
+                       Math.Int(image.GetHeight() * scale));
+}
+
+fun Centred(image, dy) {
+    sprite = Sprite(image);
+    sprite.SetX(Window.GetX() + screen.w / 2 - image.GetWidth() / 2);
+    sprite.SetY(Window.GetY() + screen.h / 2 - image.GetHeight() / 2 + dy);
+    return sprite;
+}
+
+ring.image = Scaled("ps5-plymouth-ring.png");
+ring.sprite = Centred(ring.image, 0);
+ring.sprite.SetZ(1);
+
+arc.image = Scaled("ps5-plymouth-arc.png");
+arc.sprite = Centred(arc.image, 0);
+arc.sprite.SetZ(2);
+arc.angle = 0;
+
+mark.image = Scaled("ps5-plymouth-wordmark.png");
+mark.sprite = Sprite(mark.image);
+mark.sprite.SetX(Window.GetX() + screen.w / 2 - mark.image.GetWidth() / 2);
+mark.sprite.SetY(Window.GetY() + screen.h - 120 * scale - mark.image.GetHeight());
+mark.sprite.SetZ(1);
+
+fun Refresh() {
+    arc.angle += 0.105;
+    if (arc.angle > 6.2832)
+        arc.angle -= 6.2832;
+    arc.sprite.SetImage(arc.image.Rotate(arc.angle));
+}
+Plymouth.SetRefreshFunction(Refresh);
+
+fun Quiet() {}
+Plymouth.SetDisplayNormalFunction(Quiet);
+Plymouth.SetMessageFunction(Quiet);
