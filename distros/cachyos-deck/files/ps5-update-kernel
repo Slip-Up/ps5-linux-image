@@ -1,0 +1,146 @@
+#!/bin/bash
+# Install the newest linux-ps5 release (pacman -Syu never updates it).
+# The old kernel stays on the boot partition as *.prev.
+#
+#   ps5-update-kernel             show installed and newest, ask, install
+#   ps5-update-kernel --check     only say whether a newer release exists
+#   ps5-update-kernel --yes       install without asking
+#   ps5-update-kernel --rollback  install the previously installed package
+set -u
+
+REPO="${PS5_KERNEL_REPO:-ps5-linux/ps5-linux-patches}"
+API="https://api.github.com/repos/$REPO/releases?per_page=30"
+STATE="${PS5_KERNEL_STATE:-/var/lib/ps5-kernel}"
+BOOT="${PS5_KERNEL_BOOT:-/boot/efi}"
+ASSET_RE='^linux-ps5-.*-x86_64\.pkg\.tar\.zst$'
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'ps5-update-kernel: %s\n' "$*" >&2; exit 1; }
+
+mode=update
+yes=0
+for a in "$@"; do
+    case "$a" in
+        --check)    mode=check ;;
+        --yes|-y)   yes=1 ;;
+        --rollback) mode=rollback ;;
+        -h|--help)  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *)          die "unknown option $a (see --help)" ;;
+    esac
+done
+
+if [ "$mode" != check ] && [ "$(id -u)" -ne 0 ]; then
+    exec sudo "$0" "$@"
+fi
+
+for tool in curl jq sha256sum pacman; do
+    command -v "$tool" >/dev/null 2>&1 || die "$tool is not installed"
+done
+
+installed=$(cat "$STATE/release" 2>/dev/null)
+[ -n "$installed" ] || installed="unknown"
+previous=$(cat "$STATE/previous" 2>/dev/null)
+
+install_pkg() {   # <package file> <release tag>
+    local pkg=$1 tag=$2 name
+    name=$(pacman -Qp "$pkg" 2>/dev/null | awk '{print $1}')
+    [ "$name" = linux-ps5 ] || die "$pkg is not a linux-ps5 package"
+    mountpoint -q "$BOOT" || die "$BOOT is not mounted; the kernel could not be put on the boot partition"
+
+    for f in bzImage initrd.img; do
+        if [ -s "$BOOT/$f" ]; then
+            cp -f "$BOOT/$f" "$BOOT/$f.prev" || die "no room on $BOOT for a copy of $f"
+        fi
+    done
+    sync
+
+    say "Installing $(pacman -Qp "$pkg" | tr ' ' '-') ($tag) ..."
+    pacman -U --noconfirm --ask 4 "$pkg" || die "pacman could not install the package; the boot partition still has the old kernel (also kept as *.prev)"
+
+    kver=$(pacman -Ql linux-ps5 | sed -n 's|.* /boot/vmlinuz-||p' | head -n 1)
+    if [ -n "$kver" ] && ! cmp -s "/boot/vmlinuz-$kver" "$BOOT/bzImage"; then
+        die "the new kernel is installed but is not on $BOOT; copy /boot/vmlinuz-$kver and /boot/initrd.img-$kver there as bzImage and initrd.img, or restore bzImage.prev and initrd.img.prev"
+    fi
+    sync
+
+    if [ "$installed" != "$tag" ] && [ "$installed" != unknown ]; then
+        printf '%s\n' "$installed" > "$STATE/previous"
+    fi
+    printf '%s\n' "$tag" > "$STATE/release"
+
+    systemctl restart ps5-kexec-load.service 2>/dev/null || true
+
+    # Keep the current and previous packages only.
+    keep_prev=$(cat "$STATE/previous" 2>/dev/null)
+    for f in "$STATE"/pkg/*.pkg.tar.zst; do
+        [ -e "$f" ] || continue
+        case "$(basename "$f")" in
+            "$tag.pkg.tar.zst"|"$keep_prev.pkg.tar.zst") ;;
+            *) rm -f "$f" ;;
+        esac
+    done
+    say "Done. Kernel $tag is installed. Restart the console to use it."
+}
+
+if [ "$mode" = rollback ]; then
+    [ -n "$previous" ] || die "no earlier kernel is recorded"
+    pkg="$STATE/pkg/$previous.pkg.tar.zst"
+    [ -s "$pkg" ] || die "the package of $previous is not kept ($pkg)"
+    say "Installed: $installed"
+    say "Going back to: $previous"
+    install_pkg "$pkg" "$previous"
+    exit 0
+fi
+
+json=$(curl -fsSL --connect-timeout 15 --max-time 60 -H 'Accept: application/vnd.github+json' "$API") \
+    || die "could not reach GitHub ($API)"
+
+newest=$(printf '%s' "$json" | jq -r --arg re "$ASSET_RE" '
+    [ .[] | select(.draft | not) | select(.prerelease | not)
+      | . as $r
+      | ($r.assets[] | select(.name | test($re))) as $a
+      | { tag: $r.tag_name, at: $r.published_at, url: $a.browser_download_url,
+          name: $a.name, size: $a.size, digest: ($a.digest // "") } ]
+    | sort_by(.at) | last
+    | if . == null then empty else [.tag, .url, .name, (.size|tostring), .digest, .at] | @tsv end') \
+    || die "could not read the release list"
+[ -n "$newest" ] || die "no release with a linux-ps5 package found"
+IFS=$'\t' read -r tag url name size digest at <<EOF
+$newest
+EOF
+
+say "Installed: $installed"
+say "Newest:    $tag (published $at)"
+if [ "$tag" = "$installed" ]; then
+    say "The newest kernel is already installed."
+    exit 0
+fi
+[ "$mode" = check ] && { say "A newer kernel is available. Run ps5-update-kernel to install it."; exit 0; }
+
+case "$digest" in
+    sha256:*) want=${digest#sha256:} ;;
+    *) die "GitHub lists no SHA-256 for $name; not installing an unchecked kernel" ;;
+esac
+
+if [ "$yes" -ne 1 ]; then
+    [ -t 0 ] || die "not a terminal; run with --yes to install without asking"
+    printf 'Download and install %s (%s MB)? [y/N] ' "$tag" "$((size / 1048576))"
+    read -r answer
+    case "$answer" in y|Y|yes|Yes) ;; *) say "Nothing changed."; exit 0 ;; esac
+fi
+
+mkdir -p "$STATE/pkg" || die "cannot create $STATE/pkg"
+tmp="$STATE/pkg/.download.$$"
+trap 'rm -f "$tmp"' EXIT
+say "Downloading $name ..."
+curl -fL --connect-timeout 15 --retry 3 -o "$tmp" "$url" || die "download failed"
+got_size=$(stat -c %s "$tmp")
+[ "$got_size" = "$size" ] || die "the download has $got_size bytes, expected $size"
+got=$(sha256sum "$tmp" | awk '{print $1}')
+[ "$got" = "$want" ] || die "SHA-256 does not match (got $got, expected $want)"
+say "SHA-256 matches."
+pkg="$STATE/pkg/$tag.pkg.tar.zst"
+mv -f "$tmp" "$pkg"
+trap - EXIT
+
+install_pkg "$pkg" "$tag"

@@ -118,6 +118,8 @@ EOF
             mkdir -p "$STAGING/files" "$STAGING/pkgs"
             cp /repo/distros/cachyos-deck/files/*                     "$STAGING/files/"
             cp /kernel-debs/*.pkg.tar.zst                             "$STAGING/pkgs/"
+            # which kernel release this is, for ps5-update-kernel
+            cp /kernel-debs/PATCHES_SHA /kernel-debs/VERSION          "$STAGING/pkgs/" 2>/dev/null || true
             ;;
         cachyos)
             mkdir -p "$STAGING/files"

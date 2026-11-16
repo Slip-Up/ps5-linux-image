@@ -50,6 +50,8 @@ packages:
 
     # Boot splash (files/ps5-plymouth.*)
     - plymouth
+    # ps5-update-kernel
+    - jq
 
     # KDE Plasma desktop
     - plasma-meta
@@ -234,6 +236,33 @@ files:
 - path: /usr/share/applications/ps5-setup.desktop
   generator: copy
   source: /tmp/build-staging/files/ps5-setup.desktop
+
+- path: /usr/local/bin/ps5-update-kernel
+  generator: copy
+  source: /tmp/build-staging/files/ps5-update-kernel
+  mode: "0755"
+
+- path: /usr/share/applications/ps5-update-kernel.desktop
+  generator: copy
+  source: /tmp/build-staging/files/ps5-update-kernel.desktop
+
+- path: /usr/local/bin/ps5-last-update
+  generator: copy
+  source: /tmp/build-staging/files/ps5-last-update
+  mode: "0755"
+
+- path: /usr/share/applications/ps5-last-update.desktop
+  generator: copy
+  source: /tmp/build-staging/files/ps5-last-update.desktop
+
+- path: /etc/xdg/autostart/ps5-fallback-notice.desktop
+  generator: copy
+  source: /tmp/build-staging/files/ps5-fallback-notice.desktop
+
+- path: /usr/local/bin/ps5-fallback-notice
+  generator: copy
+  source: /tmp/build-staging/files/ps5-fallback-notice
+  mode: "0755"
 
 - path: /usr/local/share/ps5-MangoHud.conf
   generator: copy
@@ -433,6 +462,8 @@ actions:
     mkdir -p /home/steam/Desktop
     cp /usr/share/applications/return-to-gaming-mode.desktop /home/steam/Desktop/
     cp /usr/share/applications/ps5-setup.desktop /home/steam/Desktop/
+    cp /usr/share/applications/ps5-update-kernel.desktop /home/steam/Desktop/
+    cp /usr/share/applications/ps5-last-update.desktop /home/steam/Desktop/
 
     # MangoHud preset
     mkdir -p /home/steam/.config/MangoHud
@@ -458,6 +489,10 @@ actions:
     ln -sf /dev/null /etc/systemd/system.conf.d/00-timeout.conf
     ln -sf /dev/null /etc/systemd/user.conf.d/00-timeout.conf
 
+    # Only linux-ps5, updated by ps5-update-kernel
+    sed -i 's|^#\?IgnorePkg *=.*|IgnorePkg   = linux linux-lts linux-zen linux-hardened linux-rt linux-rt-lts linux-cachyos*|' /etc/pacman.conf
+    grep -q '^IgnorePkg   = linux ' /etc/pacman.conf
+
     # Boot splash only, not at shutdown or kexec
     for u in plymouth-reboot plymouth-poweroff plymouth-halt plymouth-kexec; do
         ln -sf /dev/null "/etc/systemd/system/$u.service"
@@ -475,6 +510,13 @@ actions:
 
     if ls /opt/pkgs/*.pkg.tar.zst 1>/dev/null 2>&1; then
         pacman -U --noconfirm --ask 4 /opt/pkgs/*.pkg.tar.zst
+        # Record the release and keep its package for --rollback
+        if [ -s /opt/pkgs/PATCHES_SHA ] && [ -s /opt/pkgs/VERSION ]; then
+            tag="kernel-$(cat /opt/pkgs/VERSION)-$(cat /opt/pkgs/PATCHES_SHA)"
+            mkdir -p /var/lib/ps5-kernel/pkg
+            echo "$tag" > /var/lib/ps5-kernel/release
+            mv /opt/pkgs/linux-ps5-*.pkg.tar.zst "/var/lib/ps5-kernel/pkg/$tag.pkg.tar.zst"
+        fi
         rm -rf /opt/pkgs
         KVER=$(ls -1t /lib/modules | head -1)
         mkinitcpio -k "$KVER" -g "/boot/initrd.img-$KVER" || true

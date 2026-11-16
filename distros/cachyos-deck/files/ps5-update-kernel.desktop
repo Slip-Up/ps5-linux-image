@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Update PS5 Kernel
+Comment=Install the newest PS5 kernel release
+Exec=konsole --hold -e /usr/local/bin/ps5-update-kernel
+Icon=system-software-update
+Terminal=false
+Categories=System;

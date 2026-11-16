@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Last System Update
+Comment=Show what the last update changed, to find what broke
+Exec=konsole --hold -e /usr/local/bin/ps5-last-update
+Icon=view-history
+Terminal=false
+Categories=System;

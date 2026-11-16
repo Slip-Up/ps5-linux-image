@@ -1,26 +1,65 @@
 #!/bin/sh
-# ps5-session: the one session SDDM logs user steam into (ps5-session.desktop).
-#
-# gamescope-session-cachyos chooses the next session (game mode or Plasma) by
-# writing "Session=..." to /etc/sddm.conf.d/zz-steamos-autologin.conf. SteamOS
-# carries an SDDM that reads that file again at every login; stock SDDM reads
-# its configuration once, at start, so "Switch to Desktop" ended in game mode
-# again. This wrapper reads the file at every login and starts that session.
-# Anything unknown or unreadable starts game mode.
+# Stock SDDM reads its config once, so start the session that
+# steamos-session-select last wrote. If game mode exits within QUICK seconds
+# LIMIT times in a row, start the desktop once instead.
 
 CONF=/etc/sddm.conf.d/zz-steamos-autologin.conf
-next=$(sed -n 's/^Session=//p' "$CONF" 2>/dev/null | tail -n 1)
+GAME="${PS5_SESSION_GAME:-/usr/bin/start-gamescope-session}"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ps5-session"
+FAILS="$STATE/quick-exits"
+QUICK=20
+LIMIT=3
 
+start_plasma() {
+    export XDG_CURRENT_DESKTOP=KDE
+    export XDG_SESSION_DESKTOP=KDE
+    export DESKTOP_SESSION=plasma
+    exec ${PS5_SESSION_PLASMA:-/usr/lib/plasma-dbus-run-session-if-needed /usr/bin/startplasma-wayland}
+}
+
+next=$(sed -n 's/^Session=//p' "$CONF" 2>/dev/null | tail -n 1)
 case "$next" in
-    plasma*)
-        export XDG_CURRENT_DESKTOP=KDE
-        export XDG_SESSION_DESKTOP=KDE
-        export DESKTOP_SESSION=plasma
-        exec /usr/lib/plasma-dbus-run-session-if-needed /usr/bin/startplasma-wayland
-        ;;
+    plasma*) start_plasma ;;
 esac
+
+mkdir -p "$STATE" 2>/dev/null
+n=$(cat "$FAILS" 2>/dev/null)
+case "$n" in
+    ''|*[!0-9]*) n=0 ;;
+esac
+if [ "$n" -ge "$LIMIT" ]; then
+    rm -f "$FAILS"
+    : > "$STATE/fell-back"
+    echo "ps5-session: game mode ended within $QUICK s $n times in a row, starting the desktop" >&2
+    start_plasma
+fi
 
 export XDG_CURRENT_DESKTOP=gamescope
 export XDG_SESSION_DESKTOP=gamescope
 export DESKTOP_SESSION=gamescope-session
-exec /usr/bin/start-gamescope-session
+
+# Forward SDDM's logout/shutdown signals.
+asked=0
+t0=$(date +%s)
+"$GAME" &
+child=$!
+trap 'asked=1; kill -TERM "$child" 2>/dev/null' TERM INT HUP
+wait "$child"
+rc=$?
+while kill -0 "$child" 2>/dev/null; do
+    wait "$child"
+    rc=$?
+done
+t1=$(date +%s)
+
+# Signals and "Switch to Desktop" are not failures.
+next=$(sed -n 's/^Session=//p' "$CONF" 2>/dev/null | tail -n 1)
+case "$next" in
+    plasma*) asked=1 ;;
+esac
+if [ $((t1 - t0)) -ge "$QUICK" ]; then
+    rm -f "$FAILS"
+elif [ "$asked" -eq 0 ]; then
+    echo $((n + 1)) > "$FAILS" 2>/dev/null
+fi
+exit "$rc"

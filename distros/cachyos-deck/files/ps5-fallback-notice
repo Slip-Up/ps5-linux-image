@@ -1,0 +1,7 @@
+#!/bin/sh
+# Desktop autostart: tell the user once if ps5-session fell back to the desktop.
+f="${XDG_STATE_HOME:-$HOME/.local/state}/ps5-session/fell-back"
+[ -e "$f" ] || exit 0
+rm -f "$f"
+exec notify-send -u critical -a "PS5 Linux" "Game mode did not start" \
+    "It ended right after starting three times, so the desktop was started instead. Last System Update shows what changed. Return to Gaming Mode tries again."

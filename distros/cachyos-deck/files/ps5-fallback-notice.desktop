@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PS5 game mode notice
+Comment=Say why the desktop started instead of game mode
+Exec=/usr/local/bin/ps5-fallback-notice
+OnlyShowIn=KDE;
+NoDisplay=true
+X-KDE-autostart-phase=2

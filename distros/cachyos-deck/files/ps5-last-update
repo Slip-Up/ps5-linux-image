@@ -1,0 +1,24 @@
+#!/bin/sh
+# Show the packages changed by the last pacman transaction.
+LOG=/var/log/pacman.log
+
+echo "Kernel release: $(cat /var/lib/ps5-kernel/release 2>/dev/null || echo unknown)   running: $(uname -r)"
+echo
+
+if [ ! -r "$LOG" ]; then
+    echo "No $LOG: nothing was installed or updated yet."
+    exit 0
+fi
+
+start=$(grep -n '\[ALPM\] transaction started' "$LOG" | tail -n 1 | cut -d: -f1)
+if [ -z "$start" ]; then
+    echo "No update recorded in $LOG."
+    exit 0
+fi
+
+echo "Last update: $(sed -n "${start}p" "$LOG" | cut -c2-17)"
+sed -n "${start},\$p" "$LOG" |
+    sed -n 's/^.*\[ALPM\] \(upgraded\|installed\|removed\|downgraded\|reinstalled\) /  \1  /p'
+echo
+echo "To put one package back: sudo pacman -U /var/cache/pacman/pkg/<name>-<old version>-*.pkg.tar.zst"
+echo "To go back to the previous kernel: ps5-update-kernel --rollback"
