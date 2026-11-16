@@ -284,17 +284,17 @@ files:
   generator: copy
   source: /tmp/build-staging/files/ps5-plymouth.script
 
-- path: /usr/share/plymouth/themes/ps5-linux/ps5-plymouth-ring.png
+- path: /usr/share/plymouth/themes/ps5-linux/ps5-plymouth-ring.png.b64
   generator: copy
-  source: /tmp/build-staging/files/ps5-plymouth-ring.png
+  source: /tmp/build-staging/files/ps5-plymouth-ring.png.b64
 
-- path: /usr/share/plymouth/themes/ps5-linux/ps5-plymouth-arc.png
+- path: /usr/share/plymouth/themes/ps5-linux/ps5-plymouth-arc.png.b64
   generator: copy
-  source: /tmp/build-staging/files/ps5-plymouth-arc.png
+  source: /tmp/build-staging/files/ps5-plymouth-arc.png.b64
 
-- path: /usr/share/plymouth/themes/ps5-linux/ps5-plymouth-wordmark.png
+- path: /usr/share/plymouth/themes/ps5-linux/ps5-plymouth-wordmark.png.b64
   generator: copy
-  source: /tmp/build-staging/files/ps5-plymouth-wordmark.png
+  source: /tmp/build-staging/files/ps5-plymouth-wordmark.png.b64
 
 - path: /etc/plymouth/plymouthd.conf
   generator: copy
@@ -496,6 +496,13 @@ actions:
     # Boot splash only, not at shutdown or kexec
     for u in plymouth-reboot plymouth-poweroff plymouth-halt plymouth-kexec; do
         ln -sf /dev/null "/etc/systemd/system/$u.service"
+    done
+
+    # The copy generator mangles binaries, so PNGs are stored as base64
+    for f in /usr/share/plymouth/themes/ps5-linux/*.png.b64; do
+        base64 -d "$f" > "${f%.b64}"
+        rm "$f"
+        [ "$(head -c 4 "${f%.b64}" | tail -c 3)" = PNG ]
     done
 
     # Busybox-based initrd: polls for the root device (works after kexec, unlike
