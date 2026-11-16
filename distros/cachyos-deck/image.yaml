@@ -39,6 +39,15 @@ packages:
     - xorg-xwayland
     - xorg-xinit
 
+    # sched-ext schedulers
+    - scx-scheds
+    - scx-tools
+    # CachyOS system defaults
+    - cachyos-settings
+    # Proton-CachyOS and umu-launcher
+    - proton-cachyos-slr
+    - umu-launcher
+
     # Boot splash (files/ps5-plymouth.*)
     - plymouth
 
@@ -226,6 +235,18 @@ files:
   generator: copy
   source: /tmp/build-staging/files/ps5-setup.desktop
 
+- path: /usr/local/share/ps5-MangoHud.conf
+  generator: copy
+  source: /tmp/build-staging/files/MangoHud.conf
+
+- path: /etc/scx_loader/config.toml
+  generator: copy
+  source: /tmp/build-staging/files/scx-loader.toml
+
+- path: /etc/systemd/system/scx_loader.service.d/ps5.conf
+  generator: copy
+  source: /tmp/build-staging/files/ps5-scx.conf
+
 - path: /usr/share/plymouth/themes/ps5-linux/ps5-linux.plymouth
   generator: copy
   source: /tmp/build-staging/files/ps5-plymouth.plymouth
@@ -412,11 +433,30 @@ actions:
     mkdir -p /home/steam/Desktop
     cp /usr/share/applications/return-to-gaming-mode.desktop /home/steam/Desktop/
     cp /usr/share/applications/ps5-setup.desktop /home/steam/Desktop/
+
+    # MangoHud preset
+    mkdir -p /home/steam/.config/MangoHud
+    cp /usr/local/share/ps5-MangoHud.conf /home/steam/.config/MangoHud/MangoHud.conf
     chmod +x /home/steam/Desktop/*.desktop
 
     chown -R steam:steam /home/steam
 
     [ -f /etc/vconsole.conf ] || echo "KEYMAP=us" > /etc/vconsole.conf
+
+    # ntsync for Proton
+    echo ntsync > /etc/modules-load.d/ps5-ntsync.conf
+
+    # LAVD at boot; no-scx on the boot partition turns it off
+    systemctl enable scx_loader.service
+
+    # Root is on USB
+    sed -i 's|^\(LABEL=[^ ]* / ext4 \)defaults |\1defaults,noatime |' /etc/fstab
+    grep -q ' / ext4 defaults,noatime ' /etc/fstab
+
+    # Keep systemd's default timeouts; growing the root fs can take longer
+    mkdir -p /etc/systemd/system.conf.d /etc/systemd/user.conf.d
+    ln -sf /dev/null /etc/systemd/system.conf.d/00-timeout.conf
+    ln -sf /dev/null /etc/systemd/user.conf.d/00-timeout.conf
 
     # Boot splash only, not at shutdown or kexec
     for u in plymouth-reboot plymouth-poweroff plymouth-halt plymouth-kexec; do
