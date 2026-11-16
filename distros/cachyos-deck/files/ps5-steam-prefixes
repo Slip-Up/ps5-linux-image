@@ -1,0 +1,29 @@
+#!/bin/sh
+# Steam runs Proton games from the internal compatdata even for games on
+# external drives, but a move leaves a stale copy there that makes moving the
+# game back fail ("content file locked"). Rename those copies aside.
+
+steam="$HOME/.local/share/Steam"
+internal="$steam/steamapps/compatdata"
+vdf="$steam/steamapps/libraryfolders.vdf"
+
+[ -d "$internal" ] && [ -r "$vdf" ] || exit 0
+pgrep -u "$(id -u)" -x steam >/dev/null 2>&1 && exit 0
+
+stamp=$(date +%Y%m%d-%H%M%S)
+
+sed -n 's/^[[:space:]]*"path"[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$vdf" |
+while IFS= read -r lib; do
+    ext="$lib/steamapps/compatdata"
+    [ -d "$ext" ] || continue
+    [ "$(cd "$ext" && pwd -P)" = "$(cd "$internal" && pwd -P)" ] && continue
+    for dir in "$ext"/*; do
+        id=${dir##*/}
+        case "$id" in ''|*[!0-9]*) continue ;; esac
+        [ -d "$dir" ] || continue
+        mkdir -p "$lib/steamapps/compatdata-set-aside" &&
+            mv "$dir" "$lib/steamapps/compatdata-set-aside/$id-$stamp" &&
+            echo "ps5-steam-prefixes: $dir set aside (Steam runs games in $internal)"
+    done
+done
+exit 0
