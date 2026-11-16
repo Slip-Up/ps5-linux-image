@@ -98,6 +98,26 @@ All verbose output goes to `build.log`. The terminal shows a spinner with live p
 | Ubuntu 26.04 (Resolute) | GNOME | `.deb` | systemd |
 | Arch | Sway | `.pkg.tar.zst` | systemd |
 | CachyOS | Gamescope + Steam Big Picture (Arch + `[cachyos]` repo, no v3 migration in image build) | `.pkg.tar.zst` | systemd |
+| CachyOS Deck UI (`cachyos-deck`) | boots into Steam game mode, KDE Plasma as the desktop | `.pkg.tar.zst` | systemd |
+
+### CachyOS Deck UI
+
+`cachyos-deck` boots into Steam game mode, switches to Plasma and back from Steam's power menu, and restarts into
+Linux by kexec. Controllers paired with the PS5 are imported.
+
+Switches on the boot partition:
+
+| file or setting | effect |
+|---|---|
+| `no-hdr` | never offer HDR |
+| `no-scx` | no LAVD scheduler |
+| `no-kexec-restart` | Restart goes back to the PS5 system software |
+| `cmdline.txt` without `splash` | boot text instead of the splash |
+| `cmdline.txt` without `hdmi.vrr=1` | no VRR |
+
+Keep `video=DP-1:1920x1080@60` in `cmdline.txt`: without it game mode can start with no picture on a 4K display.
+
+Desktop shortcuts: Update PS5 Kernel (`ps5-update-kernel`, `--rollback` to go back) and Last System Update.
 
 ## Multi-distro Image
 
