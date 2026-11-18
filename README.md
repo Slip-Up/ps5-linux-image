@@ -1,5 +1,8 @@
 # PS5 Linux Image Builder
 
+> **Not all tested yet.** This fork adds CI on hosted runners, eight more images and the CachyOS Deck UI image. The
+> CachyOS Deck UI image has been tested on a PS5; the other new images and the CI changes have not all been tested.
+
 Builds bootable Linux USB images for PlayStation 5 using Docker containers. Supports Ubuntu 26.04, Arch, CachyOS (Gamescope + Steam), Fedora (GNOME), individually or as a multi-distro image with kexec switching.
 
 ## Prerequisites
