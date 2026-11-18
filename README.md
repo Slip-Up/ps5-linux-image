@@ -112,6 +112,7 @@ Switches on the boot partition:
 | `no-hdr` | never offer HDR |
 | `no-scx` | no LAVD scheduler |
 | `no-kexec-restart` | Restart goes back to the PS5 system software |
+| `no-steamos-manager` | no steamos-manager (Steam's storage pages) |
 | `cmdline.txt` without `splash` | boot text instead of the splash |
 | `cmdline.txt` without `hdmi.vrr=1` | no VRR |
 

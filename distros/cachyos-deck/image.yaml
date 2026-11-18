@@ -52,6 +52,8 @@ packages:
     - plymouth
     # ps5-update-kernel
     - jq
+    # Steam's system pages
+    - steamos-manager
 
     # KDE Plasma desktop
     - plasma-meta
@@ -250,6 +252,23 @@ files:
 - path: /usr/share/applications/ps5-update-kernel.desktop
   generator: copy
   source: /tmp/build-staging/files/ps5-update-kernel.desktop
+
+- path: /usr/local/lib/ps5-format-device
+  generator: copy
+  source: /tmp/build-staging/files/ps5-format-device
+  mode: "0755"
+
+- path: /usr/local/share/steamos-manager-platform.toml
+  generator: copy
+  source: /tmp/build-staging/files/steamos-manager-platform.toml
+
+- path: /etc/systemd/system/steamos-manager.service.d/ps5.conf
+  generator: copy
+  source: /tmp/build-staging/files/ps5-steamos-manager.conf
+
+- path: /etc/systemd/user/steamos-manager.service.d/ps5.conf
+  generator: copy
+  source: /tmp/build-staging/files/ps5-steamos-manager.conf
 
 - path: /usr/local/bin/ps5-last-update
   generator: copy
@@ -497,6 +516,14 @@ actions:
     # Only linux-ps5, updated by ps5-update-kernel
     sed -i 's|^#\?IgnorePkg *=.*|IgnorePkg   = linux linux-lts linux-zen linux-hardened linux-rt linux-rt-lts linux-cachyos*|' /etc/pacman.conf
     grep -q '^IgnorePkg   = linux ' /etc/pacman.conf
+
+    # No DMI on the PS5, so only platform.toml applies; NoUpgrade keeps ours.
+    # no-steamos-manager on the boot partition turns it off.
+    cp /usr/local/share/steamos-manager-platform.toml /usr/share/steamos-manager/platform.toml
+    sed -i 's|^#\?NoUpgrade *=.*|NoUpgrade   = usr/share/steamos-manager/platform.toml|' /etc/pacman.conf
+    grep -q '^NoUpgrade   = usr/share/steamos-manager/platform.toml' /etc/pacman.conf
+    systemctl enable steamos-manager.service
+    systemctl --global enable steamos-manager.service
 
     # Boot splash only, not at shutdown or kexec
     for u in plymouth-reboot plymouth-poweroff plymouth-halt plymouth-kexec; do

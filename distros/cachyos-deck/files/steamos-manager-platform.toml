@@ -1,0 +1,10 @@
+# Storage only; the other Steam Deck actions do not apply to the PS5.
+
+[storage.trim_devices]
+script = "/usr/lib/hwsupport/trim-devices.sh"
+
+[storage.format_device]
+script = "/usr/local/lib/ps5-format-device"
+label_flag = "--label"
+device_flag = "--device"
+no_validate_flag = "--skip-validation"

@@ -1,0 +1,26 @@
+#!/bin/bash
+# Steam's format action. The PS5 boots from USB, so refuse the root disk
+# before handing over to Valve's script.
+set -u
+
+VALVE=/usr/lib/hwsupport/format-device.sh
+
+dev=""
+prev=""
+for a in "$@"; do
+    [ "$prev" = "--device" ] && dev=$a
+    prev=$a
+done
+
+case "$dev" in
+    /dev/*) ;;
+    *) echo "ps5-format-device: no device given" >&2; exit 1 ;;
+esac
+
+name=$(basename "$(readlink -f "$dev")")
+if /usr/local/lib/ps5-os-disk "$name"; then
+    echo "ps5-format-device: $dev is (on) the system disk, not formatting it" >&2
+    exit 1
+fi
+
+exec "$VALVE" "$@"
