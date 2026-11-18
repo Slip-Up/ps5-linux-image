@@ -15,7 +15,7 @@ on:
       distro:
         type: string
         default: 'ubuntu2604'
-    # Without the R2 secrets (a fork) the images are built but not published.
+    # Without the R2 secrets (a fork) the images go to the GitHub release instead.
     secrets:
       R2_ACCESS_KEY_ID:
         required: false
@@ -37,6 +37,7 @@ concurrency:
 # Optional repository variables:
 #   IMAGE_RUNNER, KERNEL_RUNNER  runner labels as JSON, default ["ubuntu-24.04"]
 #   XZ_LEVEL                     xz preset, default 4
+#   R2_PUBLIC_URL                public address of the R2 bucket
 
 jobs:
   matrix:
@@ -44,6 +45,7 @@ jobs:
     outputs:
       distros: ${{ steps.set.outputs.distros }}
       publish: ${{ steps.set.outputs.publish }}
+      store: ${{ steps.set.outputs.store }}
     steps:
       - name: Checkout image list
         uses: actions/checkout@v6
@@ -69,11 +71,14 @@ jobs:
           fi
           echo "distros=$distros" >> "$GITHUB_OUTPUT"
 
-          # Publish only with the R2 secrets; forks and PRs only build.
+          # Images go to R2 when its secrets are set, else to the GitHub
+          # release (split into parts over 2 GiB). PRs only build.
           publish=true
-          [ -n "$R2_BUCKET" ] || publish=false
           case "$EVENT" in pull_request*) publish=false ;; esac
+          store=r2
+          [ -n "$R2_BUCKET" ] || store=github
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "store=$store" >> "$GITHUB_OUTPUT"
 
   # The kernel is the same for every image: build and package it once.
   kernel:
@@ -235,7 +240,7 @@ jobs:
           ls -lh image/output/ps5-${{ matrix.distro }}.img.xz
 
       - name: Upload to R2
-        if: needs.matrix.outputs.publish == 'true'
+        if: needs.matrix.outputs.publish == 'true' && needs.matrix.outputs.store == 'r2'
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -253,6 +258,39 @@ jobs:
             "r2:${{ secrets.R2_BUCKET }}/ps5-${{ matrix.distro }}.img.xz"
           rclone copyto image/output/ps5-${{ matrix.distro }}.img.xz.sha256 \
             "r2:${{ secrets.R2_BUCKET }}/ps5-${{ matrix.distro }}.img.xz.sha256"
+
+      - name: Upload to GitHub release
+        if: needs.matrix.outputs.publish == 'true' && needs.matrix.outputs.store == 'github'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          IMG: ps5-${{ matrix.distro }}.img.xz
+        run: |
+          set -euo pipefail
+          cd image/output
+          # Release files are limited to 2 GiB.
+          if [ "$(stat -c %s "$IMG")" -gt 2000000000 ]; then
+            split -b 1900M --numeric-suffixes=1 -a 1 "$IMG" "$IMG.part"
+            rm "$IMG"
+          fi
+          files=$(ls "$IMG" "$IMG".part* "$IMG.sha256" 2>/dev/null || true)
+          # Every image job may be the first one; create the release once.
+          if ! gh release view latest > /dev/null 2>&1; then
+            gh release create latest --target "$GITHUB_SHA" --title "PS5 Linux Image (latest)" \
+              --notes "Images are being uploaded." 2>/dev/null || gh release view latest > /dev/null
+          fi
+          # Drop this image's files from an earlier build (the part count can change).
+          old=$(gh release view latest --json assets --jq '.assets[].name' |
+                awk -v f="$IMG" '$0 == f || $0 == f ".sha256" ||
+                                 ($0 ~ /\.part[0-9]+$/ && index($0, f ".part") == 1)')
+          for a in $old; do gh release delete-asset latest "$a" -y; done
+          for f in $files; do
+            for try in 1 2 3; do
+              gh release upload latest "$f" --clobber && break
+              [ "$try" = 3 ] && exit 1
+              sleep 30
+            done
+          done
 
       - name: Save build metadata
         run: |
@@ -277,7 +315,7 @@ jobs:
     concurrency:
       group: ps5-image-release
       cancel-in-progress: false
-    # Run even if some distros failed: their siblings are already on R2.
+    # Run even if some distros failed: their siblings are already uploaded.
     if: >-
       ${{ !cancelled()
           && needs.matrix.result == 'success'
@@ -305,6 +343,8 @@ jobs:
         uses: actions/github-script@v8
         env:
           ATTEMPTED: ${{ needs.matrix.outputs.distros }}
+          STORE: ${{ needs.matrix.outputs.store }}
+          R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL || 'https://pub-561df4012f1a46fbbdf618d5cc5941f6.r2.dev' }}
         with:
           script: |
             const fs = require('fs');
@@ -332,9 +372,31 @@ jobs:
             }
 
             // All known distros and their display names (order = table order)
-            const R2 = 'https://pub-561df4012f1a46fbbdf618d5cc5941f6.r2.dev';
+            const onGitHub = process.env.STORE === 'github';
+            const R2 = onGitHub
+              ? `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest`
+              : process.env.R2_PUBLIC_URL;
             const ALL_DISTROS = JSON.parse(fs.readFileSync('.github/images.json', 'utf8'))
               .map(d => ({ ...d, file: `ps5-${d.key}.img.xz` }));
+
+            // On GitHub, images over 2 GiB are uploaded as .part1, .part2, ...
+            const parts = {};
+            if (onGitHub) {
+              const { data: rel } = await github.rest.repos.getReleaseByTag({
+                ...context.repo, tag: 'latest',
+              });
+              const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+                ...context.repo, release_id: rel.id, per_page: 100,
+              });
+              for (const a of assets) {
+                const m = a.name.match(/^(ps5-.+\.img\.xz)\.part(\d+)$/);
+                if (m) (parts[m[1]] ||= []).push([Number(m[2]), a.name]);
+              }
+              for (const k in parts) parts[k] = parts[k].sort((x, y) => x[0] - y[0]).map(p => p[1]);
+            }
+            const download = d => parts[d.file]
+              ? parts[d.file].map((p, i) => `[part ${i + 1}](${R2}/${p})`).join(' · ')
+              : `[\`${d.file}\`](${R2}/${d.file})`;
 
             // Fetch existing release body to preserve distros not built this run
             const existingSums = {};
@@ -391,7 +453,7 @@ jobs:
             // Each image has a .sha256 file next to it on R2, uploaded with the image.
             const rows = ALL_DISTROS
               .filter(d => d.key in mergedSums || d.key in newSums)
-              .map(d => `| ${d.label} | [\`${d.file}\`](${R2}/${d.file}) | [\`sha256\`](${R2}/${d.file}.sha256) |`);
+              .map(d => `| ${d.label} | ${download(d)} | [\`sha256\`](${R2}/${d.file}.sha256) |`);
 
             // Distros this run tried to build but did not (their previous image is kept)
             const failed = attempted.filter(d => !(d in newSums));
@@ -417,6 +479,11 @@ jobs:
               '|-------|----------|----------|',
               ...rows,
               '',
+              ...(Object.keys(parts).length
+                ? ['Images in parts: download every part and join them before flashing, e.g.',
+                   '`cat ps5-bazzite.img.xz.part* > ps5-bazzite.img.xz` (Windows: `copy /b ps5-bazzite.img.xz.part1 + ps5-bazzite.img.xz.part2 ps5-bazzite.img.xz`).',
+                   '']
+                : []),
               '**SHA256 checksums** (each image also has a `.sha256` file next to it):',
               '```',
               allSumLines,
