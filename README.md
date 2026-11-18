@@ -118,7 +118,8 @@ Switches on the boot partition:
 
 Keep `video=DP-1:1920x1080@60` in `cmdline.txt`: without it game mode can start with no picture on a 4K display.
 
-Desktop shortcuts: Update PS5 Kernel (`ps5-update-kernel`, `--rollback` to go back) and Last System Update.
+Desktop shortcuts: Update PS5 Kernel (`ps5-update-kernel`, `--rollback` to go back), Last System Update, and Install
+Decky Loader.
 
 ## Multi-distro Image
 

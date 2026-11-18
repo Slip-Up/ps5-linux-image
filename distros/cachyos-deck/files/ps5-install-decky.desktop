@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Install Decky Loader
+Comment=Optional plugin loader for game mode (third-party)
+Exec=konsole --hold -e /usr/local/bin/ps5-install-decky
+Icon=system-software-install
+Terminal=false
+Categories=System;

@@ -1,0 +1,37 @@
+#!/bin/bash
+# Install Decky Loader with its upstream installer, after asking.
+# --remove takes it out again and keeps plugins in ~/homebrew.
+set -u
+
+URL="https://github.com/SteamDeckHomebrew/decky-installer/releases/latest/download/install_release.sh"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'ps5-install-decky: %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" -ne 0 ] || die "run this as user steam, not root"
+
+if [ "${1:-}" = "--remove" ]; then
+    sudo systemctl disable --now plugin_loader.service 2>/dev/null
+    sudo rm -f /etc/systemd/system/plugin_loader.service
+    sudo systemctl daemon-reload
+    sudo rm -rf "$HOME/homebrew/services"
+    rm -f "$HOME/.steam/steam/.cef-enable-remote-debugging"
+    say "Decky Loader removed. Restart game mode to finish."
+    exit 0
+fi
+
+say "Decky Loader is a third-party plugin loader for Steam's game mode."
+say "It runs as root, updates itself from GitHub, and is not part of this image."
+say "Installer: $URL"
+say ""
+read -r -p "Install it now? [y/N] " a
+case "$a" in y|Y|yes) ;; *) say "Nothing installed."; exit 0 ;; esac
+
+tmp=$(mktemp) || die "no temporary file"
+trap 'rm -f "$tmp"' EXIT
+curl -fsSL "$URL" -o "$tmp" || die "download failed (network?)"
+say "Downloaded installer, SHA-256 $(sha256sum "$tmp" | cut -d' ' -f1)"
+# Its own "exec sudo $0" fails on a non-executable temp file.
+sudo bash "$tmp" || die "installer failed"
+say ""
+say "Done. Return to game mode; Decky appears in the Quick Access menu (... button)."
