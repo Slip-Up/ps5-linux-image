@@ -54,6 +54,8 @@ packages:
     - jq
     # Steam's system pages
     - steamos-manager
+    # Flathub in Discover
+    - flatpak
 
     # KDE Plasma desktop
     - plasma-meta
@@ -524,6 +526,10 @@ actions:
     grep -q '^NoUpgrade   = usr/share/steamos-manager/platform.toml' /etc/pacman.conf
     systemctl enable steamos-manager.service
     systemctl --global enable steamos-manager.service
+
+    # flatpak ships the Flathub remote but does not add it
+    flatpak remote-add --system --if-not-exists flathub /usr/share/flatpak/remotes.d/flathub.flatpakrepo
+    flatpak remotes --system --columns=name | grep -qx flathub
 
     # Boot splash only, not at shutdown or kexec
     for u in plymouth-reboot plymouth-poweroff plymouth-halt plymouth-kexec; do
